@@ -1,20 +1,39 @@
- <launch>
-	 <node pkg="uav_nav" type="uav_nav" name="uav_nav" output="screen">
+<launch>
+    <node pkg="comp_strategy" type="strategy" name="comp2018_core" output="screen">
 
-	 	<param name="spd_max"				value="1"/>
-	 	<param name="origin_x"				value="1"/>
-	 	<param name="origin_y"				value="1"/>
-	 	<param name="scan_spd"				value="1"/>
-	 	<param name="scan_delay"			value="2"/>
-	 	<param name="stop_range"			value="0.2"/>
-	 	<param name="safe_range"			value="0.8"/>
-	 	<param name="brake_coe"				value="1"/>
-	 	<param name="waypoint_group"		value="1"/>
-	 	<param name="output_gazebo"			value="true"/>
-	 	<param name="output_px4"			value="false"/>
-	 	<param name="height"				value="1"/>
-	 	<param name="spd_climb"				value="0.1"/>
-	 	<param name="spd_turn"				value="0.25"/>
-	 	<param name="angle_tolerance"		value="0.15"/>
-	 </node>
+
+        <param name="origin_x"				value="1"/>
+        <param name="origin_y"				value="1"/>
+        <param name="scan_spd"				value="1"/>
+        <param name="scan_delay"			value="2"/>
+        <param name="stop_range"			value="0.2"/>
+        <param name="safe_range"			value="0.8"/>
+        <param name="brake_coe"				value="1"/>
+        <param name="waypoint_group"		value="1"/>
+        <param name="output_gazebo"			value="true"/>
+        <param name="output_px4"			value="false"/>
+        <param name="height"				value="1"/>
+        <param name="spd_climb"				value="0.1"/>
+        <param name="spd_turn"				value="0.25"/>
+        <param name="angle_tolerance"		value="0.15"/>
+
+        <param name="HEIGHT_MAX"            value="3.0"/>
+        <param name="REFRESH_RATE"          value="20"/>
+        <param name="SPD_Z_MAX"             value="0.8"/>
+        <param name="TOLLERANCE_Z"          value="0.1"/>
+        <param name="SPD_Z_SMALL"           value="0.2"/>
+        <param name="SAFE_RANGE_Z"          value="0.5"/>
+
+        <param name="TOLLERANCE_XY"             value="0.15"/>
+        <param name="SPD_XY_MAX"				value="1"/>
+        <param name="SPD_XY_SMALL"                 value="0.2"/>
+        <param name="SAFE_RANGE_XY"                 value="0.8"/>
+        <param name="CRUISE_HEIGHT"                 value="1.0"/>
+        <param name="QR_OFFSET23"                 value="0.0"/>
+        <param name="QR_GLOBOL_OFFSET_X"                 value="0.0"/>
+        <param name="SPD_Z_MAX"                 value="0.8"/>
+        <param name="SPD_Z_MAX"                 value="0.8"/>
+        <param name="SPD_Z_MAX"                 value="0.8"/>
+        <param name="SPD_Z_MAX"                 value="0.8"/>
+    </node>
 </launch>

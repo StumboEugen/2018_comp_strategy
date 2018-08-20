@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8.3)
 project(comp_strategy)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-# add_compile_options(-std=c++11)
+add_compile_options(-std=c++11)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -201,7 +201,7 @@ include_directories(
 
 include_directories(include ${catkin_INCLUDE_DIRS})
 
-add_executable(strategy src/strategy.cpp)
+add_executable(strategy src/strategy.cpp src/SimpleTarget.h src/strategy.h)
 target_link_libraries(strategy ${catkin_LIBRARIES})
 
 
