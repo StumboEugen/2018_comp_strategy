@@ -201,7 +201,7 @@ include_directories(
 
 include_directories(include ${catkin_INCLUDE_DIRS})
 
-add_executable(strategy src/strategy.cpp src/SimpleTarget.h src/strategy.h)
+add_executable(strategy src/strategy.cpp src/SimpleTarget.h src/strategy.h src/tools.h)
 target_link_libraries(strategy ${catkin_LIBRARIES})
 
 

@@ -5,6 +5,10 @@
 #ifndef COMP_STRATEGY_STRATEGY_H
 #define COMP_STRATEGY_STRATEGY_H
 
+#define SIGNAL_SLOT_FOUND_CURRENT_TARGET "FirstFoundCurrentTarget"
+#define SIGNAL_SLOT_BREAK_MOVE_FOR_FOUND_TARGET "BreakMoveForFoundTarget"
+#define SIGNAL_SLOT_QR_CODE_FOUND "QRCodeFound"
+
 #include "ros/ros.h"
 
 #include <std_msgs/String.h>
@@ -17,133 +21,28 @@
 #include <px4_autonomy/Position.h>
 
 #include <sstream>
+#include <string>
 
 #include "SimpleTarget.h"
+#include "tools.h"
 
-/**
- *
- * @param disX
- * @param disY
- * @param disZ
- */
+enum CamMode {DOWNONLY = 1, ZEDBOTH = 2, ZEDCIRCLE = 3, ZEDQR = 4};
+
 void MoveBy(float disX, float disY, float disZ = 0.0, bool usingVelSP = true);
+void MoveBy(vec3f_t dist, bool usingVelSp = true);
+void MoveTo(float targetX, float targetY, float targetZ, bool usingVelSP = true);
+void MoveTo(vec3f_t target, bool usingVelSp = true);
 void CB_PX4Pose(const px4_autonomy::Position &msg);
 void CB_status(const std_msgs::UInt8 & msg);
+void CB_Camera(); //TODO
 void TakeOff();
 void Hover();
 void InitPlaces();
-
-
-typedef struct vec3f_s {
-
-    float x;
-    float y;
-    float z;
-
-    vec3f_s(float x, float y, float z) : x(x), y(y), z(z) {}
-    vec3f_s() : x(0.0f), y(0.0f), z(0.0f) {}
-
-    vec3f_s operator- (const vec3f_s& b) {
-        vec3f_s res{};
-        res.x = this->x - b.x;
-        res.y = this->y - b.y;
-        res.z = this->z - b.z;
-        return res;
-    }
-
-    vec3f_s operator+ (const vec3f_s& b) {
-        vec3f_s res{};
-        res.x = this->x + b.x;
-        res.y = this->y + b.y;
-        res.z = this->z + b.z;
-        return res;
-    }
-
-    vec3f_s operator* (const float& b) {
-        vec3f_s res;
-        res.x = this->x * b;
-        res.y = this->y * b;
-        res.z = this->z * b;
-        return res;
-    }
-
-    vec3f_s& operator= (const px4_autonomy::Position& b){
-        this->x = b.x;
-        this->y = b.y;
-        this->z = b.z;
-        return *this;
-    }
-
-    px4_autonomy::Position toPosCmd() const {
-        px4_autonomy::Position posCmd;
-        posCmd.x = this->x;
-        posCmd.y = this->y;
-        posCmd.z = this->z;
-        posCmd.yaw = 0.0f; //TODO check
-        posCmd.header.stamp = ros::Time::now();
-        return posCmd;
-    }
-
-    px4_autonomy::Velocity toVelCmd() const {
-        px4_autonomy::Velocity velCmd;
-        velCmd.x = this->x;
-        velCmd.y = this->y;
-        velCmd.z = this->z;
-        velCmd.yaw_rate = 0;
-        velCmd.header.stamp = ros::Time::now();
-        return velCmd;
-    }
-
-    float distXY() const {
-        return sqrtf(x * x + y * y);
-    }
-
-    std::string toString() const {
-        std::stringstream ss;
-        ss << " (" << x << " : " << y << ":" << z << ")";
-        std::string msg;
-        ss >> msg;
-        return msg;
-    }
-}vec3f_t;
-
-float constrainF(float value, float max, float min) {
-    if (value > max) {
-        return max;
-    } else if (value < min) {
-        return min;
-    }
-    return value;
-}
-
-/**
- * the point on a line
- * @param x target x
- * @param x1 line point 1
- * @param x2 line point 2
- * @param y1 line point 1
- * @param y2 line point 2
- * @return coor y on the line with the input x
- */
-float slopeCal(float x, float x1, float x2, float y1, float y2) {
-    if (x1 == x2) {
-        return (y1 + y2) / 2.0f;
-    }
-
-    if (x1 > x2) {
-        std::swap(x1, x2);
-        std::swap(y1, y2);
-    }
-
-    if (x < x1) {
-        return y1;
-    }
-    if (x > x2) {
-        return y2;
-    }
-
-    float slope = (y2 - y1) / (x2 - x1);
-    return y1 + (x - x1) * slope;
-}
+int CheckSignal(std::string);
+void SendCamCMD(CamMode);
+void Land();
+void AimBoardDown();
+void getParas(ros::NodeHandle & n);
+void OutputInfoAtRate(int rate = 2);
 
 #endif //COMP_STRATEGY_STRATEGY_H

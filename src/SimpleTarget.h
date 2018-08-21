@@ -6,39 +6,64 @@
 #define COMP_STRATEGY_SIMPLETARGET_H
 
 #include <vector>
+#include <utility>
+#include "tools.h"
+#include <algorithm>
 
 using std::vector;
 
 struct SimpleTarget {
     int ID;
-    float relativeY;
     float globalY;
-    vector<float> offSetX;
-    vector<float> offSetY;
+    vector<vec3f_t> poses;    //CHANGE TO POSES
     bool onlyBoard;
-    bool detectedBoard;
-    bool detectedCircle;
-    float possibleX;
+    bool detectedBoard = false;
+    bool detectedCircle = false;
+    float possibleX = -6.5f;
+    size_t possiblePose = 0;
 
-    SimpleTarget(int ID, float relativeY, float globalY, bool onlyBoard)
-            : ID(ID), relativeY(relativeY),
-              globalY(globalY), onlyBoard(onlyBoard)
+    std::pair<size_t, float> checkForClosestPose(vec3f_t detected) {
+        float minDist = 10.0f;
+        size_t minNo;
+        for (size_t i = 0; i < poses.size() - 1; i ++) {
+            vec3f_t toDetect(poses[i].x, poses[i].y + globalY, 0);
+            float dist = (toDetect - detected).distXY();
+            if (dist < minDist) {
+                minDist = dist;
+                minNo = i;
+            }
+        }
+        return std::make_pair(minNo, minDist);
+    }
+
+    SimpleTarget(int ID, float globalY, bool onlyBoard)
+            : ID(ID), globalY(globalY), onlyBoard(onlyBoard)
     {}
 
-    void addPossibleOffsets(float x, float y) {
-        offSetX.push_back(x);
-        offSetY.push_back(y);
+    void setOffsets(vec3f_t x1, vec3f_t x2, vec3f_t x3, vec3f_t x4, vec3f_t x5) {
+        poses.clear();
+        poses.push_back(x1);
+        poses.push_back(x2);
+        poses.push_back(x3);
+        poses.push_back(x4);
+        poses.push_back(x5);
+        std::sort(poses.begin(), poses.end(), vec3f_s::isXBigger);
+        for (auto & pose: poses) {
+            pose.y += globalY;
+        }
+    }
+
+    void addPossibleOffsets(vec3f_t offset) {
+        poses.push_back(offset);
     }
 };
 
 struct QRTarget {
-    float globalX;
-    float globalY;
-    bool hasTarget;
-    bool sureNoTarget;
+    vec3f_t globalPos;
+    bool disappear = false;
 
     QRTarget(float globalX, float globalY) :
-            globalX(globalX), globalY(globalY)
+            globalPos(globalX, globalY, 1)
     {}
 };
 
