@@ -43,6 +43,6 @@ void SendCamCMD(CamMode);
 void Land();
 void AimBoardDown();
 void getParas(ros::NodeHandle & n);
-void OutputInfoAtRate(int rate = 2);
+void OutputInfoAtRate(int rate = 1);
 
 #endif //COMP_STRATEGY_STRATEGY_H

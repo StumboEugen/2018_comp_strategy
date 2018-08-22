@@ -9,6 +9,7 @@
 #include <iostream>
 #include "tools.h"
 
+#define FAKE_TEST_ENABLE true
 
 float REFRESH_RATE = 10;
 
@@ -62,14 +63,15 @@ Publisher pub_Pose;
 Publisher pub_Vel;
 Publisher pub_TakeOff;
 Publisher pub_camCmd;
+Publisher pub_Fake;
 
 vec3f_t POSgolbalInMind = {0.0, 0.0, 0.0};
 vec3f_t SPgolbalInMind = {0.0, 0.0, 0.0};
 vec3f_t currentPX4Pos = {0.0, 0.0, 0.0};
 
-vec3f_t BoardPos = {0.0, 0.0, 0.0};
-vec3f_t CirclePos = {0.0, 0.0, 0.0};
-vec3f_t QRPos = {0.0, 0.0, 0.0};
+vec3f_t BoardPos;
+vec3f_t CirclePos;
+vec3f_t QRPos;
 
 vector<SimpleTarget> simpleTargets;
 vector<vector<QRTarget>> QRTargets;
@@ -83,6 +85,16 @@ int currentTargetID = 0;
 
 int main(int argc, char **argv)
 {
+    if (FAKE_TEST_ENABLE) {
+        BoardPos = {0.0, 0.0, -1.0f};
+        CirclePos = {0.0, 1.0, 0.0};
+        QRPos = {0.0, 1.0, 0.0};
+    } else {
+        BoardPos = {0.0, 0.0, 0.0};
+        CirclePos = {0.0, 0.0, 0.0};
+        QRPos = {0.0, 0.0, 0.0};
+    }
+
     ros::init(argc, argv, "comp2018_core");
     ros::NodeHandle n;
 
@@ -101,12 +113,16 @@ int main(int argc, char **argv)
     ros::Subscriber sub_status = n.subscribe("/px4/status", 1, CB_status);
     ros::Subscriber sub_camPose = n.subscribe("/px4/camPos", 1, CB_Camera);
 
+    if (FAKE_TEST_ENABLE) {
+        ROS_WARN_STREAM("[CORE][FAKE] You are now at #FAKE TEST# mode!");
+        pub_Fake = n.advertise<px4_autonomy::Position>("/px4/pose", 1);
+    }
     pub_Pose = n.advertise<px4_autonomy::Position>("/px4/cmd_pose", 1);
     pub_Vel = n.advertise<px4_autonomy::Velocity>("/px4/cmd_vel", 1);
     pub_TakeOff = n.advertise<px4_autonomy::Takeoff>("/px4/cmd_takeoff", 1);
     pub_camCmd = n.advertise<std_msgs::UInt8>("/px4/camCmd", 1);
 
-    ROS_INFO_STREAM("[CORE] Init complete" << currentPX4Pos.toString());
+    ROS_INFO_STREAM("[CORE] Init complete");
 
     int circleCount = 0;
 
@@ -116,14 +132,26 @@ int main(int argc, char **argv)
     for (int targetID = 1; targetID < simpleTargets.size(); targetID++) {
         ROS_INFO_STREAM("[CORE] Moving On Next Target: #" << targetID << " globalY:"
                                          << simpleTargets[targetID].globalY);
-        bool foundTarget = false;   //tell other parts, what are we looking for right now
-        currentTargetID = targetID;
+        bool foundTarget = false;
+        currentTargetID = targetID; //tell other parts, what are we looking for right now
         Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = targetID - 1;
 
         /**
          * if last target is Board, Cail the pos
          */
         const auto & lastTarget = simpleTargets[targetID - 1];
+        std::stringstream ss;
+        ss << "[CORE] We just leave Pose#" << targetID - 1;
+        if (lastTarget.detectedBoard) {
+            ss << ", it's a board";
+        } else if (lastTarget.detectedCircle) {
+            ss << ", it's a circle";
+        } else {
+            ss << "it's nothing?!?!";
+        }
+        ss << " at Pos#" << lastTarget.possiblePose << " with coor: "
+                        << lastTarget.poses[lastTarget.possiblePose].toString();
+        ROS_INFO_STREAM(ss.str());
         if (lastTarget.detectedBoard) {
             ROS_INFO_STREAM("[CORE] last one is Board, take off");
             TakeOff();
@@ -239,12 +267,16 @@ int main(int argc, char **argv)
              * Check where am I
              */
             auto fixResult = target.checkForClosestPose(POSgolbalInMind);
-            ROS_ERROR_STREAM_COND(fixResult.second > 1.5f,
-                                  "[CORE] YOU MAY RUN INTO A WRONG LINE!!! current POS:\n"
-                                  << POSgolbalInMind.toString()
-                                  << "current Target ID：" << currentTargetID);
+            if (fixResult.second > 1.5f) {
+                ROS_ERROR_STREAM("[CORE] YOU MAY RUN INTO A WRONG LINE!!!\n current POS:"
+                                         << POSgolbalInMind.toString()
+                                         << "\ncurrent Target ID:" << currentTargetID
+                                         << "\nthe Closest pose#" << fixResult.first
+                                         << "\nPos: " << target.poses[fixResult.first].toString()
+                                         << "\n range:" << fixResult.second);
+            }
             currentPose = fixResult.first;
-            ROS_INFO_STREAM("[CORE] We think we are at Pose#" << currentPose << "POS:"
+            ROS_WARN_STREAM("[CORE] We think we are at Pose# " << currentPose << "POS:"
                                     << POSgolbalInMind.toString());
 
             /**
@@ -310,11 +342,14 @@ int main(int argc, char **argv)
 
                 MoveTo(nextPos);
                 if (CheckSignal(SIGNAL_SLOT_FOUND_CURRENT_TARGET) == targetID) {
-                    ROS_INFO_STREAM("[CORE] See target at afterward movement");
+                    ROS_WARN_STREAM("[CORE] See target! Current Pose:"
+                                    << POSgolbalInMind.toString());
                     Signals[SIGNAL_SLOT_BREAK_MOVE_FOR_FOUND_TARGET] = 0;
                     foundTarget = true;
                     break;
                 }
+                ROS_INFO_STREAM("[CORE] NOT FIND TARGET");
+                ros::Duration(0.75).sleep();
             }
         }
 
@@ -349,6 +384,9 @@ int main(int argc, char **argv)
                 ROS_INFO_STREAM("[CORE][AIM_CIRCLE_BOARD] Circle Pos: " << CirclePos.toString());
                 vec3f_t nextPos = currentPX4Pos + localDis * AIM_BOARD_P;
                 pub_Pose.publish(nextPos.toPosCmd());
+                if (FAKE_TEST_ENABLE) {
+                    pub_Fake.publish(nextPos.toPosCmd());
+                }
                 ros::Duration(0.2).sleep();
                 if (localDis.len() < CIRCLE_BOARD_AIM_TOLLERANCE) {
                     staisfiedCount++;
@@ -391,10 +429,11 @@ int main(int argc, char **argv)
         * Land on Board
         */
         } else if (target.detectedBoard) {
+            ROS_INFO_STREAM("[CORE] found Board! sleep 0.5 sec then move closer");
+            ros::spinOnce();
+            ros::Duration(0.5).sleep();
+
             if (currentCamMode == ZEDBOTH) {
-                ROS_INFO_STREAM("[CORE] found Board! sleep 0.5 sec then move closer");
-                ros::spinOnce();
-                ros::Duration(0.5).sleep();
                 ros::spinOnce();
                 vec3f_t moveSp = BoardPos;
                 moveSp.z += BOARD_AIM_HEIGHT;
@@ -600,24 +639,28 @@ int main(int argc, char **argv)
 }
 
 void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
+    if (FAKE_TEST_ENABLE) {
+        usingVelSP = false;
+    }
     ros::Duration(0.1).sleep();
     ros::spinOnce();
     vec3f_t dis2go(disX, disY, disZ);
+    ROS_INFO_STREAM("[CORE_MOVE] dist2go :" << dis2go.toString());
     vec3f_t startPX4Pos = currentPX4Pos;
+
+    //set the Target in Ideal coor
+    SPgolbalInMind = POSgolbalInMind + dis2go;
 
     /**
      * Check the Z
      */
     float tempSetPoint = SPgolbalInMind.z;
-    SPgolbalInMind.z = constrainF(tempSetPoint, 0.4f, HEIGHT_MAX);
+    SPgolbalInMind.z = constrainF(tempSetPoint, HEIGHT_MAX, 0.4f);
     if (tempSetPoint != SPgolbalInMind.z) {
         ROS_WARN_STREAM("[CORE_MOVE] the Z_sp comes to" << tempSetPoint
                                             << ", constrain to:" << SPgolbalInMind.z);
         dis2go.z = SPgolbalInMind.z - POSgolbalInMind.z;
     }
-
-    //set the Target in Ideal coor
-    SPgolbalInMind = POSgolbalInMind + dis2go;
 
     //cal the Target in px4 coor
     vec3f_t px4Target = currentPX4Pos + dis2go;
@@ -653,6 +696,9 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
                     vec3f_t poseSp = startPX4Pos;
                     poseSp.z = currentPX4Pos.z + IncZ;
                     pub_Pose.publish(poseSp.toPosCmd());
+                    if (FAKE_TEST_ENABLE) {
+                        pub_Fake.publish(poseSp.toPosCmd());
+                    }
                 }
             } else {
                 break;  //move finished
@@ -665,6 +711,9 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
         vec3f_t poseSp = startPX4Pos;
         poseSp.z = px4Target.z;
         pub_Pose.publish(poseSp.toPosCmd());
+        if (FAKE_TEST_ENABLE) {
+            pub_Fake.publish(poseSp.toPosCmd());
+        }
         ROS_INFO_STREAM("[CORE_MOVE] arrive height: " << SPgolbalInMind.z);
 
         float abd = fabsf(dis2go.z);
@@ -722,6 +771,10 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
                         float stepY = spdY / REFRESH_RATE;
                         vec3f_t poseCmd = currentPX4Pos.operator+({stepX, stepY, 0});
                         pub_Pose.publish(poseCmd.toPosCmd());
+                        if (FAKE_TEST_ENABLE) {
+                            pub_Fake.publish(poseCmd.toPosCmd());
+                        }
+
                     }
                 } else {
                     break;
@@ -734,6 +787,9 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
     //end if (disX != 0 || disY != 0)
 
     pub_Pose.publish(px4Target.toPosCmd());
+    if (FAKE_TEST_ENABLE) {
+        pub_Fake.publish(px4Target.toPosCmd());
+    }
 
     float abd = fabsf(dis2go.distXY());
     float sleepTime = slopeCal(abd, SAFE_RANGE_XY, TOLLERANCE_XY, 0.5, 0.1);
@@ -763,6 +819,15 @@ inline void MoveTo(vec3f_t target, bool usingVelSp) {
 }
 
 void TakeOff() {
+    if (FAKE_TEST_ENABLE) {
+        ROS_WARN_STREAM("[CORE][FAKE] take off");
+        ros::Duration(2).sleep();
+        ROS_WARN_STREAM("[CORE][FAKE] take off complete");
+        POSgolbalInMind.z = CRUISE_HEIGHT;
+        pub_Fake.publish(POSgolbalInMind.toPosCmd());
+        return;
+    }
+
     while (automony_status != 1) {
         ros::Duration(1).sleep();
         ROS_INFO_THROTTLE(2, "[CORE] waitting for OFFBOARD");
@@ -800,70 +865,6 @@ void Hover() {
     ros::spinOnce();
 }
 
-
-
-void InitPlaces() {
-    SimpleTarget target(0, 0.0, true);
-    simpleTargets.push_back(target);
-    target = SimpleTarget(1, 0.0, true);
-    simpleTargets.push_back(target);
-    target = SimpleTarget(2, 0.0, false);
-    simpleTargets.push_back(target);
-    target = SimpleTarget(3, 0.0, false);
-    simpleTargets.push_back(target);
-    target = SimpleTarget(4, 0.0, false);
-    simpleTargets.push_back(target);
-    target = SimpleTarget(5, 0.0, false);
-    simpleTargets.push_back(target);
-    target = SimpleTarget(6, 0.0, false);
-    simpleTargets.push_back(target);
-    target = SimpleTarget(7, 0.0, false);
-    simpleTargets.push_back(target);
-    target = SimpleTarget(8, 0.0, false);
-    simpleTargets.push_back(target);
-    target = SimpleTarget(9, 0.0, true);
-    simpleTargets.push_back(target);
-
-    for (auto & simpleTarget : simpleTargets) {
-        simpleTarget.possibleX = X_RESTRICT_LEFT;
-        simpleTarget.possiblePose = 2;
-        simpleTarget.setOffsets({-6, 0, 0},
-                                {-3, 0, 0},
-                                {0, 0, 0},
-                                {3, 0, 0},
-                                {6, 0, 0});
-    }
-
-    vector<QRTarget> layer1;
-    layer1.emplace_back(2.5, 0);
-    layer1.emplace_back(6.0, 0);
-    layer1.emplace_back(9.5, 0);
-    layer1.emplace_back(13., 0);
-    QRTargets.push_back(std::move(layer1));
-
-    vector<QRTarget> layer2;
-    layer2.emplace_back(2.5, 3.5);
-    layer2.emplace_back(6.0, 3.5 + QR_OFFSET23);
-    layer2.emplace_back(9.5, 3.5 + QR_OFFSET23);
-    layer2.emplace_back(13., 3.5 + QR_OFFSET23);
-    QRTargets.push_back(std::move(layer2));
-
-    vector<QRTarget> layer3;
-    layer3.emplace_back(3.5, 7.0 + QR_OFFSET23);
-    layer3.emplace_back(6.0, 7.0 + QR_OFFSET23);
-    layer3.emplace_back(9.5, 7.0 + QR_OFFSET23);
-    layer3.emplace_back(11.5, 7.0 + QR_OFFSET23);
-    QRTargets.push_back(std::move(layer3));
-
-    for (auto & layer: QRTargets) {
-        for (auto & QRtarget: layer) {
-            QRtarget.globalPos.x += QR_GLOBOL_OFFSET_X;
-            QRtarget.globalPos.y += QR_GLOBOL_OFFSET_Y;
-            std::cout << QRtarget.globalPos.x << "\t: " << QRtarget.globalPos.y << "\n";
-        }
-    }
-}
-
 int CheckSignal(const std::string sigName) {
     if (Signals.find(sigName) == Signals.end()) {
         Signals.insert({sigName, 0});
@@ -880,6 +881,14 @@ void SendCamCMD(CamMode camMode) {
 }
 
 void Land() {
+    if (FAKE_TEST_ENABLE) {
+        ROS_WARN_STREAM("[CORE][FAKE] landing");
+        ros::Duration(2).sleep();
+        ROS_WARN_STREAM("[CORE][FAKE] land complete");
+        POSgolbalInMind.z = 0;
+        pub_Fake.publish(POSgolbalInMind.toPosCmd());
+        return;
+    }
     while (automony_status != 4 && automony_status != 5) {
         ros::Duration(1).sleep();
         ROS_INFO("[CORE] Ready to land, but status not 4 or 5!!");
@@ -1109,14 +1118,75 @@ void getParas(ros::NodeHandle &n) {
 }
 
 void OutputInfoAtRate(int rate) {
-    ROS_INFO_STREAM_DELAYED_THROTTLE(rate, "ZED Pos:\n\t\t\t\t\t"
-            << currentPX4Pos.toString() << "\n");
+    ROS_INFO_STREAM_DELAYED_THROTTLE(rate, "ZED Pos:"
+            << currentPX4Pos.toString());
 
-    ROS_INFO_STREAM_DELAYED_THROTTLE(rate, "Pos In Mind:\n\t\t\t\t\t"
-            << POSgolbalInMind.toString() << "\n");
+    ROS_INFO_STREAM_DELAYED_THROTTLE(rate, "Pos In Mind:"
+            << POSgolbalInMind.toString());
 }
 
+void InitPlaces() {
+    SimpleTarget target(0, 0.0, true);
+    target.detectedBoard = true;
+    simpleTargets.push_back(target);
+    target = SimpleTarget(1, 2.0, true);
+    simpleTargets.push_back(target);
+    target = SimpleTarget(2, 4.0, true);
+    simpleTargets.push_back(target);
+    target = SimpleTarget(3, 6.0, false);
+    simpleTargets.push_back(target);
+    target = SimpleTarget(4, 8.0, false);
+    simpleTargets.push_back(target);
+    target = SimpleTarget(5, 10.0, false);
+    simpleTargets.push_back(target);
+    target = SimpleTarget(6, 12.0, false);
+    simpleTargets.push_back(target);
+    target = SimpleTarget(7, 14.0, false);
+    simpleTargets.push_back(target);
+    target = SimpleTarget(8, 16.0, false);
+    simpleTargets.push_back(target);
+    target = SimpleTarget(9, 18.0, true);
+    simpleTargets.push_back(target);
 
+    for (auto & simpleTarget : simpleTargets) {
+        simpleTarget.possibleX = X_RESTRICT_LEFT;
+        simpleTarget.possiblePose = 2;
+        simpleTarget.setOffsets({-6, 0, 0},
+                                {-3, 0, 0},
+                                {0, 0, 0},
+                                {3, 0, 0},
+                                {6, 0, 0});
+    }
+
+    vector<QRTarget> layer1;
+    layer1.emplace_back(2.5, 0);
+    layer1.emplace_back(6.0, 0);
+    layer1.emplace_back(9.5, 0);
+    layer1.emplace_back(13., 0);
+    QRTargets.push_back(std::move(layer1));
+
+    vector<QRTarget> layer2;
+    layer2.emplace_back(2.5, 3.5);
+    layer2.emplace_back(6.0, 3.5 + QR_OFFSET23);
+    layer2.emplace_back(9.5, 3.5 + QR_OFFSET23);
+    layer2.emplace_back(13., 3.5 + QR_OFFSET23);
+    QRTargets.push_back(std::move(layer2));
+
+    vector<QRTarget> layer3;
+    layer3.emplace_back(3.5, 7.0 + QR_OFFSET23);
+    layer3.emplace_back(6.0, 7.0 + QR_OFFSET23);
+    layer3.emplace_back(9.5, 7.0 + QR_OFFSET23);
+    layer3.emplace_back(11.5, 7.0 + QR_OFFSET23);
+    QRTargets.push_back(std::move(layer3));
+
+    for (auto & layer: QRTargets) {
+        for (auto & QRtarget: layer) {
+            QRtarget.globalPos.x += QR_GLOBOL_OFFSET_X;
+            QRtarget.globalPos.y += QR_GLOBOL_OFFSET_Y;
+            std::cout << QRtarget.globalPos.x << "\t: " << QRtarget.globalPos.y << "\n";
+        }
+    }
+}
 
 
 

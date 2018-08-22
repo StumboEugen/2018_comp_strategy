@@ -25,8 +25,8 @@ struct SimpleTarget {
     std::pair<size_t, float> checkForClosestPose(vec3f_t detected) {
         float minDist = 10.0f;
         size_t minNo;
-        for (size_t i = 0; i < poses.size() - 1; i ++) {
-            vec3f_t toDetect(poses[i].x, poses[i].y + globalY, 0);
+        for (size_t i = 0; i < poses.size(); i ++) {
+            vec3f_t toDetect(poses[i].x, poses[i].y, 0);
             float dist = (toDetect - detected).distXY();
             if (dist < minDist) {
                 minDist = dist;
