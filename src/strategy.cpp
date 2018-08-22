@@ -934,6 +934,13 @@ void CB_status(const std_msgs::UInt8 & msg) {
 }
 
 void CB_Camera(const geometry_msgs::PoseStamped &msg) {
+    static ros::Time lastStamp;
+    if (lastStamp >= msg.header.stamp) {
+        ROS_ERROR_STREAM("[CORE][CB_CAMERA] wrong stamp!\nnow: " << msg.header.stamp
+                                                                 << "\nlast:" << lastStamp);
+        return;
+    }
+    lastStamp = msg.header.stamp;
     vec3f_t poseFromCam;
     poseFromCam.x = static_cast<float>(msg.pose.position.x);
     poseFromCam.y = static_cast<float>(msg.pose.position.y);
