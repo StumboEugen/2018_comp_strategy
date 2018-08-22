@@ -42,6 +42,6 @@
 
         <param name="DYNAMIC_DETECT_ENABLE"                 value="false"/>
         <param name="DYNAMIC_DETECT_TOLLERANCE"             value="0.5"/>
-        <param name="MATCH_DETECT_TOLLERANCE"               value="1.0"/>
+        <param name="MATCH_DETECT_TOLLERANCE"               value="0.6"/>
     </node>
 </launch>

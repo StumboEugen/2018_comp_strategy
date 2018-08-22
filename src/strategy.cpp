@@ -52,7 +52,7 @@ float QR_CRUISE_HEIGHT = 1.15f;
 
 bool DYNAMIC_DETECT_ENABLE = false;
 float DYNAMIC_DETECT_TOLLERANCE = 0.5f;
-float MATCH_DETECT_TOLLERANCE = 1.0;
+float MATCH_DETECT_TOLLERANCE = 0.6;
 
 using std::vector;
 using ros::Publisher;
@@ -82,6 +82,8 @@ CamMode currentCamMode;
 enum SearchDirection {TOWARD_LEFT = -1, UNSET = 0, TOWARD_RIGHT = 1};
 
 int currentTargetID = 0;
+
+bool newCamPoseReceived = false;
 
 int main(int argc, char **argv)
 {
@@ -310,7 +312,9 @@ int main(int argc, char **argv)
             bool visited0 = false;
             bool visited4 = false;
 
-            //while of the round(5 places in a round)
+            /**
+             * keep searching in 5 places (round and round)
+             */
             while(true) {
                 vec3f_t nextPos;
                 if (currentPose == 0) {
@@ -381,13 +385,18 @@ int main(int argc, char **argv)
             while (true) {
                 ros::spinOnce();
                 OutputInfoAtRate(1.25);
-                vec3f_t localDis = CirclePos;
-                localDis.y -= CIRCLE_SEARCH_OFFSET_Y;
-                MoveBy(localDis);
-                ROS_INFO_STREAM("[CORE][AIM_CIRCLE_BOARD] Circle Pos: " << CirclePos.toString());
-                if (localDis.len() < FIRST_RANGE_BOARD_AIM) {
-                    ROS_INFO_STREAM("[CORE] Moved into a closer range");
-                    break;
+                if (FAKE_TEST_ENABLE || newCamPoseReceived) {
+                    newCamPoseReceived= false;
+                    vec3f_t localDis = CirclePos;
+                    localDis.y -= CIRCLE_SEARCH_OFFSET_Y;
+                    MoveBy(localDis);
+                    ROS_INFO_STREAM("[CORE][AIM_CIRCLE_BOARD] Circle Pos: " << CirclePos.toString());
+                    if (localDis.len() < FIRST_RANGE_BOARD_AIM) {
+                        ROS_INFO_STREAM("[CORE] Moved into a closer range");
+                        break;
+                    }
+                } else {
+                    ROS_WARN_DELAYED_THROTTLE(2, "No New Cam POSE...");
                 }
                 ros::Duration(0.2).sleep();
             }
@@ -396,23 +405,27 @@ int main(int argc, char **argv)
             while (true) {
                 ros::spinOnce();
                 OutputInfoAtRate(1.25);
-                vec3f_t localDis = CirclePos;
-                localDis.y -= CIRCLE_SEARCH_OFFSET_Y;
-                ROS_INFO_STREAM("[CORE][AIM_CIRCLE_BOARD] Circle Pos: " << CirclePos.toString());
-                vec3f_t nextPos = currentPX4Pos + localDis * AIM_BOARD_P;
-                pub_Pose.publish(nextPos.toPosCmd());
-                if (FAKE_TEST_ENABLE) {
-                    pub_Fake.publish(nextPos.toPosCmd());
-                }
-                ros::Duration(0.2).sleep();
-                if (localDis.len() < CIRCLE_BOARD_AIM_TOLLERANCE) {
-                    staisfiedCount++;
-                    ROS_INFO_STREAM("[CORE] Very close, Satisifed count:" << staisfiedCount);
-                    if (staisfiedCount >= AIM_BOARD_SATISFIED_COUNT) {
-                        break;
-                        ROS_INFO_STREAM("[CORE] Circle Board Aim Complete!");
+                if (FAKE_TEST_ENABLE || newCamPoseReceived) {
+                    vec3f_t localDis = CirclePos;
+                    localDis.y -= CIRCLE_SEARCH_OFFSET_Y;
+                    ROS_INFO_STREAM("[CORE][AIM_CIRCLE_BOARD] Circle Pos: " << CirclePos.toString());
+                    vec3f_t nextPos = currentPX4Pos + localDis * AIM_BOARD_P;
+                    pub_Pose.publish(nextPos.toPosCmd());
+                    if (FAKE_TEST_ENABLE) {
+                        pub_Fake.publish(nextPos.toPosCmd());
                     }
-                    continue;
+                    ros::Duration(0.2).sleep();
+                    if (localDis.len() < CIRCLE_BOARD_AIM_TOLLERANCE) {
+                        staisfiedCount++;
+                        ROS_INFO_STREAM("[CORE] Very close, Satisifed count:" << staisfiedCount);
+                        if (staisfiedCount >= AIM_BOARD_SATISFIED_COUNT) {
+                            break;
+                            ROS_INFO_STREAM("[CORE] Circle Board Aim Complete!");
+                        }
+                        continue;
+                    }
+                } else {
+                    ROS_WARN_DELAYED_THROTTLE(2, "No New Cam POSE...");
                 }
                 staisfiedCount = 0;
             }
@@ -940,13 +953,18 @@ void AimBoardDown() {
     while (true) {
         SendCamCMD(DOWNONLY);
         ros::spinOnce();
-        ros::Duration(0.5).sleep();
-        vec3f_t localDis = BoardPos;
-        localDis.z += BOARD_AIM_HEIGHT;
-        MoveBy(localDis);
-        ROS_INFO_STREAM("[CORE][AIM_BOARD] Board Pos: " << BoardPos.toString());
-        if (localDis.distXY() < BOARD_AIM_TOLLERANCE) {
-            break;
+        if (FAKE_TEST_ENABLE || newCamPoseReceived) {
+            ros::Duration(0.5).sleep();
+            vec3f_t localDis = BoardPos;
+            localDis.z += BOARD_AIM_HEIGHT;
+            MoveBy(localDis);
+            ROS_INFO_STREAM("[CORE][AIM_BOARD] Board Pos: " << BoardPos.toString());
+            if (localDis.distXY() < BOARD_AIM_TOLLERANCE) {
+                break;
+            }
+
+        } else {
+            ROS_WARN_DELAYED_THROTTLE(2, "No New Cam POSE...");
         }
         ros::Duration(0.2).sleep();
     }
@@ -997,6 +1015,8 @@ void CB_Camera(const geometry_msgs::PoseStamped &msg) {
             }
 
             BoardPos = poseFromCam;
+            newCamPoseReceived = true;
+
             simpleTemp.possiblePose = searchRes.first;
             simpleTemp.possibleX = (poseFromCam + POSgolbalInMind).x;
             simpleTemp.detectedBoard = true;
@@ -1017,6 +1037,8 @@ void CB_Camera(const geometry_msgs::PoseStamped &msg) {
                     firstDeteced = false;
                 }
                 BoardPos = poseFromCam;
+                newCamPoseReceived = true;
+
                 simpleTemp.possiblePose = searchRes.first;
                 simpleTemp.possibleX = (poseFromCam + POSgolbalInMind).x;
                 simpleTemp.detectedBoard = true;
@@ -1033,6 +1055,8 @@ void CB_Camera(const geometry_msgs::PoseStamped &msg) {
                     firstDeteced = false;
                 }
                 CirclePos = poseFromCam;
+                newCamPoseReceived = true;
+
                 simpleTemp.possiblePose = searchRes.first;
                 simpleTemp.possibleX = (poseFromCam + POSgolbalInMind).x;
                 simpleTemp.detectedCircle = true;
@@ -1054,6 +1078,8 @@ void CB_Camera(const geometry_msgs::PoseStamped &msg) {
                     firstDeteced = false;
                 }
                 CirclePos = poseFromCam;
+                newCamPoseReceived = true;
+
                 simpleTemp.possiblePose = searchRes.first;
                 simpleTemp.possibleX = (poseFromCam + POSgolbalInMind).x;
                 simpleTemp.detectedCircle = true;
