@@ -30,7 +30,7 @@ enum CamMode {DOWNONLY = 1, ZEDBOTH = 2, ZEDCIRCLE = 3, ZEDQR = 4};
 
 void MoveBy(float disX, float disY, float disZ = 0.0, bool usingVelSP = true);
 void MoveBy(vec3f_t dist, bool usingVelSp = true);
-void MoveTo(float targetX, float targetY, float targetZ, bool usingVelSP = true);
+void MoveTo(float targetX, float targetY, float targetZ, bool usingVelSP = false); //todo
 void MoveTo(vec3f_t target, bool usingVelSp = true);
 void CB_PX4Pose(const px4_autonomy::Position &msg);
 void CB_status(const std_msgs::UInt8 & msg);
@@ -43,6 +43,6 @@ void SendCamCMD(CamMode);
 void Land();
 void AimBoardDown();
 void getParas(ros::NodeHandle & n);
-void OutputInfoAtRate(int rate = 1);
+void OutputInfoAtRate(float rate = 1);
 
 #endif //COMP_STRATEGY_STRATEGY_H
