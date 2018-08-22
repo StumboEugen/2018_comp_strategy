@@ -4,6 +4,7 @@
 #include <vector>
 #include <map>
 #include <std_msgs/UInt8.h>
+#include <geometry_msgs/PoseStamped.h>
 
 #include <iostream>
 #include "tools.h"
@@ -98,11 +99,12 @@ int main(int argc, char **argv)
 
     ros::Subscriber sub_localPos = n.subscribe("/px4/pose", 1, CB_PX4Pose);
     ros::Subscriber sub_status = n.subscribe("/px4/status", 1, CB_status);
+    ros::Subscriber sub_camPose = n.subscribe("/px4/camPos", 1, CB_Camera);
 
     pub_Pose = n.advertise<px4_autonomy::Position>("/px4/cmd_pose", 1);
     pub_Vel = n.advertise<px4_autonomy::Velocity>("/px4/cmd_vel", 1);
     pub_TakeOff = n.advertise<px4_autonomy::Takeoff>("/px4/cmd_takeoff", 1);
-    pub_camCmd = n.advertise<std_msgs::UInt8>("/px4/camCmd", 1); //TODO check name, add cam_CB
+    pub_camCmd = n.advertise<std_msgs::UInt8>("/px4/camCmd", 1);
 
     ROS_INFO_STREAM("[CORE] Init complete" << currentPX4Pos.toString());
 
@@ -316,7 +318,6 @@ int main(int argc, char **argv)
             }
         }
 
-        //TODO CAM CB
         /**
          * Move through circle
          */
@@ -923,16 +924,21 @@ void CB_status(const std_msgs::UInt8 & msg) {
     automony_status = msg.data;
 }
 
-void CB_Camera() {
-    bool foundCircle;
-    bool foundBoard;
-    bool foundTree;
-    bool foundQR;
+void CB_Camera(const geometry_msgs::PoseStamped &msg) {
+    vec3f_t poseFromCam;
+    poseFromCam.x = static_cast<float>(msg.pose.position.x);
+    poseFromCam.y = static_cast<float>(msg.pose.position.y);
+    poseFromCam.z = static_cast<float>(msg.pose.position.z);
+    bool foundBoard = msg.pose.orientation.x > 0.5;
+    bool foundCircle = msg.pose.orientation.y > 0.5;
+    bool foundTree = msg.pose.orientation.z > 0.5;
+    bool foundQR = msg.pose.orientation.w > 0.5;
+
     auto & currentSimpleTarget = simpleTargets[currentTargetID];
     SimpleTarget simpleTemp = currentSimpleTarget;
     bool firstDeteced = false;
     auto & currentQRTarget = QRTargets[currentTargetID / 4][currentTargetID % 4];
-    vec3f_t poseFromCam;
+
     /**
      * Only look down find Board
      */

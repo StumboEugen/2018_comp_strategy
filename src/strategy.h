@@ -34,7 +34,7 @@ void MoveTo(float targetX, float targetY, float targetZ, bool usingVelSP = true)
 void MoveTo(vec3f_t target, bool usingVelSp = true);
 void CB_PX4Pose(const px4_autonomy::Position &msg);
 void CB_status(const std_msgs::UInt8 & msg);
-void CB_Camera(); //TODO
+void CB_Camera(const geometry_msgs::PoseStamped &msg);
 void TakeOff();
 void Hover();
 void InitPlaces();
