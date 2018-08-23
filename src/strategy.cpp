@@ -33,7 +33,7 @@ float QR_GLOBOL_OFFSET_X = 0.0f;
 float QR_GLOBOL_OFFSET_Y = 0.0f;
 float X_RESTRICT_LEFT = -6.5f;
 float X_RESTRICT_RIGHT = 6.5;
-float DETECT_OFFSET = 1.0;
+float SIMPLE_DETECT_OFFSET = 1.3;
 
 float CIRCLE_SEARCH_OFFSET_Y = 0.75;
 float CIRCLE_SEARCH_OFFSET_Z = 0.15;
@@ -46,7 +46,7 @@ float AIM_BOARD_P = 0.6f;
 int AIM_BOARD_SATISFIED_COUNT = 5;
 float CIRCLE_CLIMB_SLEEP_TIME = 0.75f;
 
-float BOARD_AIM_HEIGHT = 1.0f;
+float BOARD_AIM_HEIGHT = 1.5f;
 float BOARD_AIM_TOLLERANCE = 0.3f;
 
 float QR_SEARCH_OFFSET = 1.0f;
@@ -64,6 +64,8 @@ float THRESHOLD_CAM_CIRCLE_SECOND = 2.0;
 float THRESHOLD_CAM_TREE_FIRST = 0.75;
 float THRESHOLD_CAM_TREE_SECOND = 2.0;
 float THRESHOLD_CAM_QR_SECOND = 2.25;
+
+float BOTH_SAFETY_CHECK_TIME = 0.25;
 
 using std::vector;
 using ros::Publisher;
@@ -279,8 +281,8 @@ int main(int argc, char **argv)
             }
 
             if (needOffsetY) {
-                firstTargetPos.y -= DETECT_OFFSET;
-                ROS_INFO_STREAM("[FIRST_MV] Add y offsetL: " << -DETECT_OFFSET);
+                firstTargetPos.y -= SIMPLE_DETECT_OFFSET;
+                ROS_INFO_STREAM("[FIRST_MV] Add y offsetL: " << -SIMPLE_DETECT_OFFSET);
             }
 
             /** this is the first move*/
@@ -380,7 +382,7 @@ int main(int argc, char **argv)
                 }
 
                 nextPos = target.poses[currentPose];
-                if (needOffsetY) nextPos.y -= DETECT_OFFSET;
+                if (needOffsetY) nextPos.y -= SIMPLE_DETECT_OFFSET;
                 nextPos.z = CRUISE_HEIGHT;
                 ROS_WARN_STREAM("[LOOPING] Next Possible coor:" << nextPos.toString());
 
@@ -504,7 +506,7 @@ int main(int argc, char **argv)
             // if (currentCamMode == ZEDBOTH) {
             ros::spinOnce();
             vec3f_t moveSp = BoardPos;
-            moveSp.z = 0;
+            moveSp.z = BOARD_AIM_HEIGHT - POSgolbalInMind.z;
             MoveBy(moveSp);
             // }
 
@@ -1082,6 +1084,8 @@ ROSPrintFirstFindTarget(const std::string &CBFName, const vec3f_t &poseFromCam,
                          << "\n global at " << (POSgolbalInMind + poseFromCam).toString());
 }
 
+std::map<int, ros::Time> BOTHChecker;
+
 void CB_Camera_Board(const geometry_msgs::PoseStamped &msg) {
     static ros::Time lastStamp;
     if (lastStamp >= msg.header.stamp && !FAKE_TEST_ENABLE) {
@@ -1107,6 +1111,23 @@ void CB_Camera_Board(const geometry_msgs::PoseStamped &msg) {
             auto searchRes = simpleTargets[currentTargetID].checkForClosestPose(
                     poseFromCam + POSgolbalInMind);
             if (searchRes.second < THRESHOLD_CAM_BOARD_FIRST) {
+                if (currentCamMode == ZEDBOTH) {
+                    if (BOTHChecker.find(currentTargetID) == BOTHChecker.end()) {
+                        BOTHChecker[currentTargetID] = ros::Time::now();
+                        ROS_INFO_STREAM("[CB_BOARD] First detected, but I need to wait...");
+                    } else {
+                        if (ros::Time::now() - BOTHChecker[currentTargetID]
+                            > ros::Duration(BOTH_SAFETY_CHECK_TIME)) {
+                            if (currentSimpleTarget.detectedCircle) {
+                                ROS_INFO_STREAM(
+                                        "[CB_BOARD][AFTER WAIT] Detected Wrong!");
+                            } else {
+                                ROS_INFO_STREAM(
+                                        "[CB_BOARD][AFTER WAIT] Detected Right!");
+                            }
+                        }
+                    }
+                }
                 Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = currentTargetID;
                 newCamPos_Board = true;
 
@@ -1300,7 +1321,7 @@ void getParas(ros::NodeHandle &n) {
     n.getParam("/comp2018_core/QR_GLOBOL_OFFSET_Y", QR_GLOBOL_OFFSET_Y);
     n.getParam("/comp2018_core/X_RESTRICT_LEFT", X_RESTRICT_LEFT);
     n.getParam("/comp2018_core/X_RESTRICT_RIGHT", X_RESTRICT_RIGHT);
-    n.getParam("/comp2018_core/DETECT_OFFSET", DETECT_OFFSET);
+    n.getParam("/comp2018_core/SIMPLE_DETECT_OFFSET", SIMPLE_DETECT_OFFSET);
 
     n.getParam("/comp2018_core/CIRCLE_SEARCH_OFFSET_Y", CIRCLE_SEARCH_OFFSET_Y);
     n.getParam("/comp2018_core/CIRCLE_SEARCH_OFFSET_Z", CIRCLE_SEARCH_OFFSET_Z);
@@ -1331,6 +1352,8 @@ void getParas(ros::NodeHandle &n) {
     n.getParam("/comp2018_core/THRESHOLD_CAM_TREE_FIRST", THRESHOLD_CAM_TREE_FIRST);
     n.getParam("/comp2018_core/THRESHOLD_CAM_TREE_SECOND", THRESHOLD_CAM_TREE_SECOND);
     n.getParam("/comp2018_core/THRESHOLD_CAM_QR_SECOND", THRESHOLD_CAM_QR_SECOND);
+
+    n.getParam("/comp2018_core/BOTH_SAFETY_CHECK_TIME", BOTH_SAFETY_CHECK_TIME);
 }
 
 void OutputPosAtRate(float rate) {
