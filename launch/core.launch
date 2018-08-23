@@ -1,11 +1,11 @@
 <launch>
     <node pkg="comp_strategy" type="strategy" name="comp2018_core" output="screen">
 
-        <param name="REFRESH_RATE"          value="1020"/>
+        <param name="REFRESH_RATE"          value="10"/>
 
         <param name="HEIGHT_MAX"            value="3.0"/>
         <param name="SPD_Z_MAX"             value="0.8"/>
-        <param name="TOLLERANCE_Z"          value="0.1"/>
+        <param name="TOLLERANCE_Z"          value="0.2"/>
         <param name="SPD_Z_SMALL"           value="0.2"/>
         <param name="SAFE_RANGE_Z"          value="0.5"/>
 
@@ -24,13 +24,14 @@
         <param name="DETECT_OFFSET"                 value="1.0"/>
 
         <param name="CIRCLE_SEARCH_OFFSET_Y"           value="0.75"/>
+        <param name="CIRCLE_SEARCH_OFFSET_Z"           value="0.15"/>
         <param name="CIRCLE_PASS_DIST"                 value="1.0"/>
-        <param name="LOW_CIRCLE_BOARD_HEIGHT"          value="0.365"/>
-        <param name="HIGH_CIRCLE_BOARD_HEIGHT"         value="0.765"/>
+        <param name="LOW_CIRCLE_BOARD_HEIGHT"          value="0.5"/>
+        <param name="HIGH_CIRCLE_BOARD_HEIGHT"         value="0.9"/>
         <param name="FIRST_RANGE_BOARD_AIM"            value="0.4"/>
-        <param name="CIRCLE_BOARD_AIM_TOLLERANCE"      value="0.1"/>
+        <param name="CIRCLE_BOARD_AIM_TOLLERANCE"      value="0.3"/>
         <param name="AIM_BOARD_P"                      value="0.6"/>
-        <param name="AIM_BOARD_SATISFIED_COUNT"        value="5"/>
+        <param name="AIM_BOARD_SATISFIED_COUNT"        value="2"/>
         <param name="CIRCLE_CLIMB_SLEEP_TIME"          value="0.75"/>
 
         <param name="BOARD_AIM_HEIGHT"         value="1.0"/>
@@ -43,5 +44,13 @@
         <param name="DYNAMIC_DETECT_ENABLE"                 value="false"/>
         <param name="DYNAMIC_DETECT_TOLLERANCE"             value="0.5"/>
         <param name="MATCH_DETECT_TOLLERANCE"               value="0.6"/>
+
+        <param name="THRESHOLD_CAM_BOARD_FIRST"               value="0.75"/>
+        <param name="THRESHOLD_CAM_BOARD_SECOND"               value="2.0"/>
+        <param name="THRESHOLD_CAM_CIRCLE_FIRST"               value="0.75"/>
+        <param name="THRESHOLD_CAM_CIRCLE_SECOND"               value="2.0"/>
+        <param name="THRESHOLD_CAM_TREE_FIRST"               value="0.75"/>
+        <param name="THRESHOLD_CAM_TREE_SECOND"               value="2.0"/>
+        <param name="THRESHOLD_CAM_QR_SECOND"               value="2.25"/>
     </node>
 </launch>

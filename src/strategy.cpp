@@ -9,7 +9,9 @@
 #include <iostream>
 #include "tools.h"
 
-#define FAKE_TEST_ENABLE true
+#define FAKE_TEST_ENABLE false
+#define QR_ONLY_ENABLE true
+#define NO_ACCURATE_X_MODE false
 
 float REFRESH_RATE = 10;
 
@@ -34,9 +36,10 @@ float X_RESTRICT_RIGHT = 6.5;
 float DETECT_OFFSET = 1.0;
 
 float CIRCLE_SEARCH_OFFSET_Y = 0.75;
+float CIRCLE_SEARCH_OFFSET_Z = 0.15;
 float CIRCLE_PASS_DIST = 1.0;
-float LOW_CIRCLE_BOARD_HEIGHT = 0.365;
-float HIGH_CIRCLE_BOARD_HEIGHT = 0.365;
+float LOW_CIRCLE_BOARD_HEIGHT = 0.5;
+float HIGH_CIRCLE_BOARD_HEIGHT = 0.9;
 float FIRST_RANGE_BOARD_AIM = 0.4;
 float CIRCLE_BOARD_AIM_TOLLERANCE = 0.1;
 float AIM_BOARD_P = 0.6f;
@@ -53,6 +56,14 @@ float QR_CRUISE_HEIGHT = 1.15f;
 bool DYNAMIC_DETECT_ENABLE = false;
 float DYNAMIC_DETECT_TOLLERANCE = 0.5f;
 float MATCH_DETECT_TOLLERANCE = 0.6;
+
+float THRESHOLD_CAM_BOARD_FIRST = 0.75;
+float THRESHOLD_CAM_BOARD_SECOND = 2.0;
+float THRESHOLD_CAM_CIRCLE_FIRST = 0.75;
+float THRESHOLD_CAM_CIRCLE_SECOND = 2.0;
+float THRESHOLD_CAM_TREE_FIRST = 0.75;
+float THRESHOLD_CAM_TREE_SECOND = 2.0;
+float THRESHOLD_CAM_QR_SECOND = 2.25;
 
 using std::vector;
 using ros::Publisher;
@@ -72,6 +83,7 @@ vec3f_t currentPX4Pos = {0.0, 0.0, 0.0};
 vec3f_t BoardPos;
 vec3f_t CirclePos;
 vec3f_t QRPos;
+vec3f_t TreePos;
 
 vector<SimpleTarget> simpleTargets;
 vector<vector<QRTarget>> QRTargets;
@@ -83,7 +95,10 @@ enum SearchDirection {TOWARD_LEFT = -1, UNSET = 0, TOWARD_RIGHT = 1};
 
 int currentTargetID = 0;
 
-bool newCamPoseReceived = false;
+bool newCamPos_Board = false;
+bool newCamPos_Circle = false;
+bool newCamPos_Tree = false;
+bool newCamPos_QR = false;
 
 int main(int argc, char **argv)
 {
@@ -91,10 +106,12 @@ int main(int argc, char **argv)
         BoardPos = {0.0, 0.0, -1.0f};
         CirclePos = {0.0, 1.0, 0.0};
         QRPos = {0.0, 1.0, 0.0};
+        TreePos = {0.0, 1.0, 0.0};
     } else {
         BoardPos = {0.0, 0.0, 0.0};
         CirclePos = {0.0, 0.0, 0.0};
         QRPos = {0.0, 0.0, 0.0};
+        TreePos = {0.0, 0.0, 0.0};
     }
 
     ros::init(argc, argv, "comp2018_core");
@@ -110,19 +127,30 @@ int main(int argc, char **argv)
     Signals.insert({SIGNAL_SLOT_FOUND_CURRENT_TARGET, 0});
     Signals.insert({SIGNAL_SLOT_BREAK_MOVE_FOR_FOUND_TARGET, 0});
     Signals.insert({SIGNAL_SLOT_QR_CODE_FOUND, 0});
+    Signals.insert({SIGNAL_SLOT_QR_CODE_SAVED, 0});
+    Signals.insert({SIGNAL_SLOT_COLLASPE_WARNNING_LEFT, 0});
+    Signals.insert({SIGNAL_SLOT_COLLASPE_WARNNING_RIGHT, 0});
 
     ros::Subscriber sub_localPos = n.subscribe("/px4/pose", 1, CB_PX4Pose);
     ros::Subscriber sub_status = n.subscribe("/px4/status", 1, CB_status);
-    ros::Subscriber sub_camPose = n.subscribe("/px4/camPos", 1, CB_Camera);
+    ros::Subscriber sub_camPose_board = n.subscribe("/px4/camPos_Board", 1, CB_Camera_Board);
+    ros::Subscriber sub_camPose_circle = n.subscribe("/px4/camPos_Circle", 1, CB_Camera_Circle);
+    ros::Subscriber sub_camPose_tree = n.subscribe("/px4/camPos_Tree", 1, CB_Camera_Tree);
+    ros::Subscriber sub_camPose_qr = n.subscribe("/px4/camPos_QR", 1, CB_Camera_QR);
 
-    if (FAKE_TEST_ENABLE) {
-        ROS_WARN_STREAM("[CORE][FAKE] You are now at #FAKE TEST# mode!");
-        pub_Fake = n.advertise<px4_autonomy::Position>("/px4/pose", 1);
-    }
     pub_Pose = n.advertise<px4_autonomy::Position>("/px4/cmd_pose", 1);
     pub_Vel = n.advertise<px4_autonomy::Velocity>("/px4/cmd_vel", 1);
     pub_TakeOff = n.advertise<px4_autonomy::Takeoff>("/px4/cmd_takeoff", 1);
     pub_camCmd = n.advertise<std_msgs::UInt8>("/px4/camCmd", 1);
+
+    if (FAKE_TEST_ENABLE) {
+        ROS_WARN_STREAM("[FAKE] You are now at #FAKE TEST# mode!");
+        pub_Fake = n.advertise<px4_autonomy::Position>("/px4/pose", 1);
+    }
+
+    if (NO_ACCURATE_X_MODE) {
+        ROS_WARN_STREAM("[NO X] You are now at #NO ACCURATE X# mode!");
+    }
 
     ROS_INFO_STREAM("[CORE] Init complete");
 
@@ -132,18 +160,18 @@ int main(int argc, char **argv)
      * Stage 1, Board & Circle
      */
     for (int targetID = 1; targetID < simpleTargets.size(); targetID++) {
-        ROS_INFO_STREAM("[CORE] Moving On Next Target: #" << targetID << " globalY:"
+        ROS_WARN_STREAM("[STAGE-1-] Moving On Next Target: #" << targetID << " globalY:"
                                          << simpleTargets[targetID].globalY);
         bool foundTarget = false;
         currentTargetID = targetID; //tell other parts, what are we looking for right now
-        Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = targetID - 1;
+        Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = -1;
 
         /**
          * if last target is Board, Cail the pos
          */
         const auto & lastTarget = simpleTargets[targetID - 1];
         std::stringstream ss;
-        ss << "[CORE] We just leave Pose#" << targetID - 1;
+        ss << "[STAGE-1-] We just leave Pose#" << targetID - 1;
         if (lastTarget.detectedBoard) {
             ss << ", it's a board";
         } else if (lastTarget.detectedCircle) {
@@ -151,25 +179,33 @@ int main(int argc, char **argv)
         } else {
             ss << "it's nothing?!?!";
         }
-        ss << " at Pos#" << lastTarget.possiblePose << " with coor: "
-                        << lastTarget.poses[lastTarget.possiblePose].toString();
-        ROS_INFO_STREAM(ss.str());
+        if (!NO_ACCURATE_X_MODE) {
+            ss << " at Pos#" << lastTarget.possiblePose << " with coor: "
+               << lastTarget.poses[lastTarget.possiblePose].toString();
+        }
+        ROS_WARN_STREAM(ss.str());
         if (lastTarget.detectedBoard) {
-            ROS_INFO_STREAM("[CORE] last one is Board, take off");
+            ROS_INFO_STREAM("[LAST_BOARD_CHECK] last one is Board, take off");
             TakeOff();
-            if (targetID != 1) {
-                AimBoardDown();
-                ros::spinOnce();
+            currentTargetID = targetID -1; //cail cam found last
+            Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = -1;
+            AimBoardDown();
+            ros::spinOnce();
 
+            if (NO_ACCURATE_X_MODE) {
+                POSgolbalInMind.y = lastTarget.globalY;
+            } else {
                 size_t lastPose = lastTarget.possiblePose;
                 POSgolbalInMind = lastTarget.poses[lastPose] - BoardPos;
                 POSgolbalInMind.z = currentPX4Pos.z;
-                ROS_INFO_STREAM("[CORE] Cail complete, Ideal Pose:"
-                                << POSgolbalInMind.toString());
-                ROS_INFO_STREAM("[CORE] Cail complete, ZED Pose:"
-                                << currentPX4Pos.toString());
             }
+            ROS_INFO_STREAM("[LAST_BOARD_CHECK] Cail complete, Ideal Pose:"
+                            << POSgolbalInMind.toString());
+            ROS_INFO_STREAM("[LAST_BOARD_CHECK] Cail complete, ZED Pose:"
+                            << currentPX4Pos.toString());
         }
+        currentTargetID = targetID;
+        Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = -1;
 
         auto & target = simpleTargets[targetID];
 
@@ -178,6 +214,7 @@ int main(int argc, char **argv)
          */
         while (!foundTarget) {
 
+            ROS_INFO_STREAM("Searching for POS#" << currentTargetID);
             /**
              * decide the first pose setpoint
              */
@@ -384,11 +421,12 @@ int main(int argc, char **argv)
             //TODO in case image process is dead
             while (true) {
                 ros::spinOnce();
-                OutputInfoAtRate(1.25);
-                if (FAKE_TEST_ENABLE || newCamPoseReceived) {
-                    newCamPoseReceived= false;
+                OutputPosAtRate(1.25);
+                if (FAKE_TEST_ENABLE || newCamPos_Board) {
+                    newCamPos_Board = false;
                     vec3f_t localDis = CirclePos;
                     localDis.y -= CIRCLE_SEARCH_OFFSET_Y;
+                    localDis.z += CIRCLE_SEARCH_OFFSET_Z;
                     MoveBy(localDis);
                     ROS_INFO_STREAM("[CORE][AIM_CIRCLE_BOARD] Circle Pos: " << CirclePos.toString());
                     if (localDis.len() < FIRST_RANGE_BOARD_AIM) {
@@ -396,7 +434,7 @@ int main(int argc, char **argv)
                         break;
                     }
                 } else {
-                    ROS_WARN_DELAYED_THROTTLE(2, "No New Cam POSE...");
+                    ROS_WARN_DELAYED_THROTTLE(2, "No New Cam POSE_BOARD...");
                 }
                 ros::Duration(0.2).sleep();
             }
@@ -404,10 +442,12 @@ int main(int argc, char **argv)
             int staisfiedCount = 0;
             while (true) {
                 ros::spinOnce();
-                OutputInfoAtRate(1.25);
-                if (FAKE_TEST_ENABLE || newCamPoseReceived) {
+                OutputPosAtRate(1.25);
+                if (FAKE_TEST_ENABLE || newCamPos_Circle) {
+                    newCamPos_Circle = false;
                     vec3f_t localDis = CirclePos;
                     localDis.y -= CIRCLE_SEARCH_OFFSET_Y;
+                    localDis.z += CIRCLE_SEARCH_OFFSET_Z;
                     ROS_INFO_STREAM("[CORE][AIM_CIRCLE_BOARD] Circle Pos: " << CirclePos.toString());
                     vec3f_t nextPos = currentPX4Pos + localDis * AIM_BOARD_P;
                     pub_Pose.publish(nextPos.toPosCmd());
@@ -465,12 +505,12 @@ int main(int argc, char **argv)
             ros::spinOnce();
             ros::Duration(0.5).sleep();
 
-            if (currentCamMode == ZEDBOTH) {
-                ros::spinOnce();
-                vec3f_t moveSp = BoardPos;
-                moveSp.z += BOARD_AIM_HEIGHT;
-                MoveBy(moveSp);
-            }
+            // if (currentCamMode == ZEDBOTH) {
+            ros::spinOnce();
+            vec3f_t moveSp = BoardPos;
+            moveSp.z = 0;
+            MoveBy(moveSp);
+            // }
 
             SendCamCMD(DOWNONLY);
             ros::spinOnce();
@@ -516,22 +556,26 @@ int main(int argc, char **argv)
      *
      * Take off and cail of the last pos
      */
-    if (!FAKE_TEST_ENABLE) {
-        ROS_INFO_STREAM("[CORE] Last Take off & Aim, then we move to QR poses");
-        TakeOff();
-        AimBoardDown();
-        ros::spinOnce();
 
-        size_t lastPose = simpleTargets.back().possiblePose;
-        POSgolbalInMind = simpleTargets.back().poses[lastPose] - BoardPos;
-        POSgolbalInMind.z = currentPX4Pos.z;
-        ROS_INFO_STREAM("[CORE] Cail complete, Ideal Pose:"
-                                << POSgolbalInMind.toString());
-        ROS_INFO_STREAM("[CORE] Cail complete, ZED Pose:"
-                                << currentPX4Pos.toString());
+    if (QR_ONLY_ENABLE) {
+        TakeOff();
+    }
+    else if (!FAKE_TEST_ENABLE) {
+         ROS_INFO_STREAM("[STAGE 1.5] Last Take off & Aim, then we move to QR poses");
+         TakeOff();
+         AimBoardDown();
+         ros::spinOnce();
+
+         size_t lastPose = simpleTargets.back().possiblePose;
+         POSgolbalInMind = simpleTargets.back().poses[lastPose] - BoardPos;
+         POSgolbalInMind.z = currentPX4Pos.z;
+         ROS_INFO_STREAM("[STAGE 1.5] Cail complete, Ideal Pose:"
+                                 << POSgolbalInMind.toString());
+         ROS_INFO_STREAM("[STAGE 1.5] Cail complete, ZED Pose:"
+                                 << currentPX4Pos.toString());
     }
 
-    ROS_INFO_STREAM("[CORE] Now we are going to the QR Zone");
+    ROS_INFO_STREAM("[STAGE -2-] Now we are going to the QR Zone");
 
     currentTargetID = -1;
 
@@ -547,17 +591,17 @@ int main(int argc, char **argv)
      * loop of 3 layers
      */
     for(int layer = 0; layer < QRTargets.size(); layer++) {
-        ROS_INFO_STREAM("[CORE] Current layer is #" << layer);
+        ROS_INFO_STREAM("[LAYER] Current layer is #" << layer);
         int currentQRNum;
         auto & QRLayer = QRTargets[layer];
         float disLeft = fabsf(QRLayer.front().globalPos.x - POSgolbalInMind.x);
         float disRight = fabsf(POSgolbalInMind.x - QRLayer.back().globalPos.x);
         if (disLeft > disRight) {
-            ROS_INFO_STREAM("[CORE] Choose to move from the right side");
+            ROS_INFO_STREAM("[LAYER] Choose to move from the right side");
             QRSearchDir = TOWARD_LEFT;
-            currentQRNum = static_cast<int>(QRTargets.size());
+            currentQRNum = static_cast<int>(QRTargets.size() - 1);
         } else {
-            ROS_INFO_STREAM("[CORE] Choose to move from the left side" << layer);
+            ROS_INFO_STREAM("[LAYER] Choose to move from the left side" << layer);
             QRSearchDir = TOWARD_RIGHT;
             currentQRNum = 0;
         }
@@ -567,52 +611,67 @@ int main(int argc, char **argv)
          */
         while (true) {
             currentTargetID = layer * 4 + currentQRNum;
-            Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = currentTargetID - 1;
+            Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = -1;
+            Signals[SIGNAL_SLOT_QR_CODE_FOUND] = -1;
+            Signals[SIGNAL_SLOT_QR_CODE_SAVED] = -1;
             auto targetPos = QRLayer[currentQRNum].globalPos;
+            if (QRSearchDir == TOWARD_LEFT) {
+                targetPos.x -= 0.3;
+            } else if (QRSearchDir == TOWARD_RIGHT) {
+                targetPos.x += 0.3;
+            }
             targetPos.y -= QR_SEARCH_OFFSET;
             targetPos.z = QR_CRUISE_HEIGHT;
 
-            ROS_INFO_STREAM("[CORE] Move to: " << targetPos.toString());
+            ROS_INFO_STREAM("[TREE] Move to TREE#" << currentQRNum);
+
             MoveTo(targetPos);
 
             /**
              * if found Tree, move to it
              */
             if (CheckSignal(SIGNAL_SLOT_FOUND_CURRENT_TARGET) == currentTargetID) {
-                ROS_INFO_STREAM("[CORE] We detect the Tree!");
+                ROS_WARN_STREAM("[TREE] We detect the Tree!");
                 Hover();
                 ros::spinOnce();
                 ros::Duration(0.4).sleep();
                 ros::spinOnce();
-                vec3f_t disSp = QRPos;
+                vec3f_t disSp = TreePos;
                 disSp.y -= QR_SEARCH_OFFSET;
-                disSp.z = QR_CRUISE_HEIGHT - currentPX4Pos.z;
-                ROS_INFO_STREAM("[CORE] Try to Move closer");
+                disSp.z = 0;
+                ROS_INFO_STREAM("[TREE] Try to Move closer");
                 MoveBy(disSp);
                 ros::spinOnce();
-                POSgolbalInMind = QRLayer[currentQRNum].globalPos - QRPos;
+                ros::Duration(0.5).sleep();
+                ros::spinOnce();
+                POSgolbalInMind = QRLayer[currentQRNum].globalPos - TreePos;
                 POSgolbalInMind.z = currentPX4Pos.z;
 
                 /**
                  * Afterwards if find QR, capture the QR
                  */
                 if (CheckSignal(SIGNAL_SLOT_QR_CODE_FOUND) == currentTargetID) {
-                    ROS_INFO_STREAM("[CORE] Here is an ER WEI MA!");
+                    ROS_WARN_STREAM("[QR] Here is an ER WEI MA!");
                     QRcount ++;
+                    int i = 0;
                     while (true) {
-                        ros::spinOnce();
-                        vec3f_t posSP = QRPos;
-                        posSP.y -= QR_SEARCH_OFFSET;
-                        if (posSP.len() < QR_TOLLANCE) {
-                            ROS_INFO_STREAM("[CORE_QR] Try to move more closer, QR_POSE: "
-                                            << QRPos.toString());
-                            POSgolbalInMind = QRLayer[currentQRNum].globalPos - QRPos;
-                            POSgolbalInMind.z = currentPX4Pos.z;
-                            break;
+                        i++;
+                        if (i >= 10) {
+                            i = 0;
                         }
+                        ros::spinOnce();
+                        vec3f_t posSP = TreePos;
+                        posSP.y -= QR_SEARCH_OFFSET;
+                        float tempHeight = slopeCal(i, 0, 10, 1.0, 1.3);
+                        disSp.z = tempHeight - currentPX4Pos.z;
+
                         MoveBy(posSP);
                         ros::Duration(0.33).sleep();
                         ros::spinOnce();
+                        if (CheckSignal(SIGNAL_SLOT_QR_CODE_SAVED) == currentTargetID) {
+                            ROS_WARN_STREAM("[QR] QR saved successfully");
+                            break;
+                        }
                     }
                 }
                 /**
@@ -620,35 +679,46 @@ int main(int argc, char **argv)
                  */
             } else {
                 QRLayer[currentQRNum].disappear = true;
-                ROS_INFO_STREAM("[CORE] Tree at Layer" << layer <<
+                ROS_INFO_STREAM("[QR] Tree at Layer" << layer <<
                                              " pos" << currentQRNum << "DISSAPPEAR!");
             }
 
             if (currentQRNum == QRTargets[layer].size() - 1 && QRSearchDir == TOWARD_RIGHT) {
+                vec3f_t leftestPosSP = QRTargets[layer].back().globalPos;
+                leftestPosSP.y -= QR_SEARCH_OFFSET;
+                leftestPosSP.z = QR_CRUISE_HEIGHT;
                 if (layer != QRTargets.size() - 1) {
-                    ROS_INFO_STREAM("[CORE] Layer#" << layer << " finish, "
+                    ROS_WARN_STREAM("[QR] Layer#" << layer << " finish, "
                                                                "Leaving from RIGHT site...");
-                    MoveBy(-1.5f, 0.f, 0.0, false);
-                    MoveBy(0.f, 3.5f, 0.0, false);
+                    leftestPosSP.x -= 1.5;
+                    MoveTo(leftestPosSP, false);
+                    MoveBy(0.f, 2.75f, 0.0, false);
                     break;
                 } else {
-                    ROS_INFO_STREAM("[CORE] QR Finished, Moving to land...");
-                    MoveBy(1.9f, 0.f, 0.0);
+                    ROS_WARN_STREAM("[QR] QR Finished, Moving to land...");
+                    leftestPosSP.x += 1.9;
+                    MoveTo(leftestPosSP, false);
                     MoveBy(0.f, 2.9f, 0.0);
                     break;
                 }
             }
 
             if (currentQRNum == 0 && QRSearchDir == TOWARD_LEFT) {
+                vec3f_t rightestPosSP = QRTargets[layer].front().globalPos;
+                rightestPosSP.y -= QR_SEARCH_OFFSET;
+                rightestPosSP.z = QR_CRUISE_HEIGHT;
                 if (layer != QRTargets.size() - 1) {
-                    ROS_INFO_STREAM("[CORE] Layer" << layer << " finish, "
+                    ROS_WARN_STREAM("[QR] Layer" << layer << " finish, "
                                                                "Leaving from LEFT site...");
-                    MoveBy(1.5f, 0.f, 0.0, false);
+                    vec3f_t tempPosSp = QRTargets[layer].front().globalPos;
+                    tempPosSp.x += 1.5;
+                    MoveTo(tempPosSp, false);
                     MoveBy(0.f, 3.5f, 0.0, false);
                     break;
                 } else {
-                    ROS_INFO_STREAM("[CORE] QR Finished, Moving to land...");
-                    MoveBy(-1.9f, 0.f, 0.0);
+                    ROS_WARN_STREAM("[QR] QR Finished, Moving to land...");
+                    rightestPosSP.x -= 1.9;
+                    MoveBy(rightestPosSP, false);
                     MoveBy(0.f, 2.9f, 0.0);
                     break;
                 }
@@ -661,6 +731,8 @@ int main(int argc, char **argv)
             if (QRSearchDir == TOWARD_RIGHT) {
                 currentQRNum++;
             }
+
+            ROS_INFO_STREAM("[CORE] Now move to next QR");
         }
     }
 
@@ -673,6 +745,7 @@ int main(int argc, char **argv)
 }
 
 void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
+    ROS_INFO_STREAM("[ INTO MOVE ]");
     bool alreadyArriveTarget = currentTargetID == Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET];
     if (FAKE_TEST_ENABLE) {
         usingVelSP = false;
@@ -680,8 +753,7 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
     ros::Duration(0.1).sleep();
     ros::spinOnce();
     vec3f_t dis2go(disX, disY, disZ);
-    ROS_INFO_STREAM("\n\n[ MoveBy Start ]");
-    ROS_INFO_STREAM("[CORE_MOVE] dist2go :" << dis2go.toString());
+    ROS_WARN_STREAM("[MOVE] dist2go :" << dis2go.toString());
     vec3f_t startPX4Pos = currentPX4Pos;
 
     //set the Target in Ideal coor
@@ -693,7 +765,7 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
     float tempSetPoint = SPgolbalInMind.z;
     SPgolbalInMind.z = constrainF(tempSetPoint, HEIGHT_MAX, 0.35f);
     if (tempSetPoint != SPgolbalInMind.z) {
-        ROS_WARN_STREAM("[CORE_MOVE] the Z_sp comes to" << tempSetPoint
+        ROS_ERROR_STREAM("[MOVE] the Z_sp comes to" << tempSetPoint
                                             << ", constrain to:" << SPgolbalInMind.z);
         dis2go.z = SPgolbalInMind.z - POSgolbalInMind.z;
     }
@@ -709,16 +781,16 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
     float signZ = 0.0f;
     if (dis2go.z > 0.0) {
         signZ = 1.0f;
-        ROS_INFO_STREAM("[CORE_MOVE] climb by " << dis2go.z << " to " << SPgolbalInMind.z);
+        ROS_WARN_STREAM("[MOVE] climb by " << dis2go.z << " to " << px4Target.z);
     } else if (dis2go.z < 0.0) {
         signZ = -1.0f;
-        ROS_INFO_STREAM("[CORE_MOVE] go down by " << -dis2go.z << " to " << SPgolbalInMind.z);
+        ROS_WARN_STREAM("[MOVE] go down by " << -dis2go.z << " to " << px4Target.z);
     }
 
     if (dis2go.z != 0.0) {
         while (ros::ok()) {
             ros::spinOnce();
-            OutputInfoAtRate();
+            OutputPosAtRate();
             POSgolbalInMind.z = currentPX4Pos.z;
             float height2go = fabsf(currentPX4Pos.z - px4Target.z);
             if (height2go > TOLLERANCE_Z) {
@@ -750,11 +822,11 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
         if (FAKE_TEST_ENABLE) {
             pub_Fake.publish(poseSp.toPosCmd());
         }
-        ROS_INFO_STREAM("[CORE_MOVE] arrive height: " << SPgolbalInMind.z);
+        ROS_INFO_STREAM("[MOVE] arrive height: " << px4Target.z);
 
         float abd = fabsf(dis2go.z);
         float sleepTime = slopeCal(abd, SAFE_RANGE_Z, TOLLERANCE_Z, 0.5, 0.1);
-        ROS_INFO_STREAM("[CORE_MOVE] sleep " << sleepTime << "sec for stable");
+        //ROS_INFO_STREAM("[MOVE] sleep " << sleepTime << "sec for stable");
         ros::Duration(sleepTime).sleep();
 
         //POS_SP
@@ -767,11 +839,11 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
      * Then move at XY plane
      */
     if (disX != 0 || disY != 0) {
-        ROS_WARN_STREAM("[CORE_MOVE] move by: (" << disX << ",\t" << disY << ")");
-        ROS_WARN_STREAM("[CORE_MOVE] move to: (" << SPgolbalInMind.x << ",\t" << SPgolbalInMind.y << ")");
+        ROS_WARN_STREAM("[MOVE] move by: (" << disX << ",\t" << disY << ")");
+        ROS_WARN_STREAM("[MOVE] move to: (" << SPgolbalInMind.x << ",\t" << SPgolbalInMind.y << ")");
             while(ros::ok()) {
                 ros::spinOnce();
-                OutputInfoAtRate();
+                OutputPosAtRate();
                 // cal the dist in px4 coor
                 vec3f_t distVec = px4Target - currentPX4Pos;
                 // update the pos in Ideal coor
@@ -783,13 +855,13 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
                 if (!alreadyArriveTarget &&
                     currentTargetID == Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET]) {
                     Signals[SIGNAL_SLOT_BREAK_MOVE_FOR_FOUND_TARGET] = 1;
-                    ROS_INFO_STREAM("[CORE_MOVE] move interrupted for found current target:"
+                    ROS_INFO_STREAM("[MOVE] move interrupted for found current target:"
                                     << currentTargetID);
-                    ROS_INFO_STREAM("[CORE_MOVE] current POSgolbal: "
+                    ROS_INFO_STREAM("[MOVE] current POSgolbal: "
                                     << POSgolbalInMind.toString());
-                    ROS_INFO_STREAM("[CORE_MOVE] current ZED Pos: "
+                    ROS_INFO_STREAM("[MOVE] current ZED Pos: "
                                             << currentPX4Pos.toString());
-                    ROS_INFO_STREAM("\n[ Move Interrupted ]\n");
+                    ROS_INFO_STREAM("[ Move Interrupted ]");
                     Hover();
                     return;
                 }
@@ -819,7 +891,7 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
                 }
                 loopRate.sleep();
             }
-        ROS_INFO_STREAM("[CORE_MOVE] arrive pos("
+        ROS_INFO_STREAM("[MOVE] arrive pos("
                         << SPgolbalInMind.x << ",\t" << SPgolbalInMind.y << ")");
     }
     //end if (disX != 0 || disY != 0)
@@ -831,14 +903,14 @@ void MoveBy(float disX, float disY, float disZ, bool usingVelSP) {
 
     float abd = fabsf(dis2go.distXY());
     float sleepTime = slopeCal(abd, SAFE_RANGE_XY, TOLLERANCE_XY, 0.5, 0.1);
-    ROS_INFO_STREAM("[CORE_MOVE] sleep " << sleepTime << "sec for stable");
+    ROS_INFO_STREAM("[MOVE] sleep " << sleepTime << "sec for stable");
     ros::Duration(sleepTime).sleep();
 
     ros::spinOnce();
     POSgolbalInMind = SPgolbalInMind;
     POSgolbalInMind.z = currentPX4Pos.z;
 
-    ROS_INFO_STREAM("\n[ Move Finish ]\n");
+    ROS_INFO_STREAM("[ Move Finish ]");
     ros::spinOnce();
 
 }
@@ -950,24 +1022,29 @@ void Land() {
 }
 
 void AimBoardDown() {
+    ROS_INFO_STREAM("[CORE][INTO AIMMING BOARD DOWN]");
     while (true) {
         SendCamCMD(DOWNONLY);
         ros::spinOnce();
-        if (FAKE_TEST_ENABLE || newCamPoseReceived) {
+        if (FAKE_TEST_ENABLE || newCamPos_Board) {
+            newCamPos_Board = false;
             ros::Duration(0.5).sleep();
             vec3f_t localDis = BoardPos;
-            localDis.z += BOARD_AIM_HEIGHT;
-            MoveBy(localDis);
+            localDis.z = BOARD_AIM_HEIGHT - currentPX4Pos.z;
+            
             ROS_INFO_STREAM("[CORE][AIM_BOARD] Board Pos: " << BoardPos.toString());
+            MoveBy(localDis);
+
             if (localDis.distXY() < BOARD_AIM_TOLLERANCE) {
                 break;
             }
 
         } else {
-            ROS_WARN_DELAYED_THROTTLE(2, "No New Cam POSE...");
+            ROS_WARN_DELAYED_THROTTLE(2, "No New Cam POSE_BOARD...");
         }
         ros::Duration(0.2).sleep();
     }
+    ROS_INFO_STREAM("[CORE][OUT AIMMING BOARD DOWN]\n");
 }
 
 void CB_PX4Pose(const px4_autonomy::Position &msg) {
@@ -978,10 +1055,21 @@ void CB_status(const std_msgs::UInt8 & msg) {
     automony_status = msg.data;
 }
 
-void CB_Camera(const geometry_msgs::PoseStamped &msg) {
+void
+ROSPrintFirstFindTarget(const std::string &CBFName, const vec3f_t &poseFromCam,
+                        const std::pair<size_t, float> &searchRes) {
+    ROS_WARN_STREAM("\n" << CBFName << " Detect Target#"
+                         << currentTargetID
+                         << "! \nWe think it is Pose#" << searchRes.first
+                         << "\n We are at " << POSgolbalInMind.toString()
+                         << "\n Target relatively at " << poseFromCam.toString()
+                         << "\n global at " << (POSgolbalInMind + poseFromCam).toString());
+}
+
+void CB_Camera_Board(const geometry_msgs::PoseStamped &msg) {
     static ros::Time lastStamp;
     if (lastStamp >= msg.header.stamp && !FAKE_TEST_ENABLE) {
-        ROS_ERROR_STREAM("[CORE][CB_CAMERA] wrong stamp!\nnow: " << msg.header.stamp
+        ROS_ERROR_STREAM("[CORE][CB_BOARD] wrong stamp!\nnow: " << msg.header.stamp
                                                                  << "\nlast:" << lastStamp);
         return;
     }
@@ -990,148 +1078,190 @@ void CB_Camera(const geometry_msgs::PoseStamped &msg) {
     poseFromCam.x = static_cast<float>(msg.pose.position.x);
     poseFromCam.y = static_cast<float>(msg.pose.position.y);
     poseFromCam.z = static_cast<float>(msg.pose.position.z);
+
     bool foundBoard = msg.pose.orientation.x > 0.5;
-    bool foundCircle = msg.pose.orientation.y > 0.5;
-    bool foundTree = msg.pose.orientation.z > 0.5;
-    bool foundQR = msg.pose.orientation.w > 0.5;
 
     auto & currentSimpleTarget = simpleTargets[currentTargetID];
-    SimpleTarget simpleTemp = currentSimpleTarget;
-    bool firstDeteced = false;
+
+    if ((currentCamMode == DOWNONLY || currentCamMode == ZEDBOTH) && foundBoard) {
+        if (Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] != currentTargetID) {
+            /**
+             *  It's might the first time we found this target, firstly check the pose
+             */
+            auto searchRes = simpleTargets[currentTargetID].checkForClosestPose(
+                    poseFromCam + POSgolbalInMind);
+            if (searchRes.second < THRESHOLD_CAM_BOARD_FIRST) {
+                Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = currentTargetID;
+                newCamPos_Board = true;
+
+                ROSPrintFirstFindTarget("[CB_BOARD]", poseFromCam, searchRes);
+
+                BoardPos = poseFromCam;
+                currentSimpleTarget.possibleX = (poseFromCam + POSgolbalInMind).x;
+
+                currentSimpleTarget.possiblePose = searchRes.first;
+
+                if (currentSimpleTarget.detectedCircle) {
+                    ROS_WARN_STREAM("[CB_BOARD] But we have considered this to be a circle!!!");
+                    //currentSimpleTarget.detectedCircle = false; //TODO DYNAMIC
+                } else {
+                    currentSimpleTarget.detectedBoard = true;
+                }
+            }
+        } else {
+            /**
+             *  We are tracking the current target
+             */
+            if (poseFromCam.len() <= THRESHOLD_CAM_BOARD_SECOND) {
+                newCamPos_Board = true;
+                BoardPos = poseFromCam;
+            } else {
+
+            }
+        }
+    }
+}
+
+void CB_Camera_Circle(const geometry_msgs::PoseStamped &msg) {
+    static ros::Time lastStamp;
+    if (lastStamp >= msg.header.stamp && !FAKE_TEST_ENABLE) {
+        ROS_ERROR_STREAM("[CB_CIRCLE] wrong stamp!\nnow: " << msg.header.stamp
+                                                                << "\nlast:" << lastStamp);
+        return;
+    }
+    lastStamp = msg.header.stamp;
+    vec3f_t poseFromCam;
+    poseFromCam.x = static_cast<float>(msg.pose.position.x);
+    poseFromCam.y = static_cast<float>(msg.pose.position.y);
+    poseFromCam.z = static_cast<float>(msg.pose.position.z);
+
+    bool foundCircle = msg.pose.orientation.y > 0.5;
+
+    auto & currentSimpleTarget = simpleTargets[currentTargetID];
+
+    if ((currentCamMode == ZEDCIRCLE || currentCamMode == ZEDBOTH) && foundCircle) {
+        if (Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] != currentTargetID) {
+            /**
+             *  It's might the first time we found this target, firstly check the pose
+             */
+            auto searchRes = simpleTargets[currentTargetID].checkForClosestPose(
+                    poseFromCam + POSgolbalInMind);
+            if (searchRes.second < THRESHOLD_CAM_CIRCLE_FIRST) {
+                Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = currentTargetID;
+                newCamPos_Circle = true;
+
+                ROSPrintFirstFindTarget("[CB_CIRCLE]", poseFromCam, searchRes);
+
+                CirclePos = poseFromCam;
+                currentSimpleTarget.possibleX = (poseFromCam + POSgolbalInMind).x;
+
+                currentSimpleTarget.possiblePose = searchRes.first;
+
+                if (currentSimpleTarget.detectedBoard) {
+                    ROS_WARN_STREAM("[CB_CIRCLE] But we have considered this to be a circle!!!");
+                    currentSimpleTarget.detectedBoard = false; //TODO DYNAMIC
+                } else {
+                    currentSimpleTarget.detectedCircle = true;
+                }
+            }
+        } else {
+            /**
+             *  We are tracking the current target
+             */
+            if (poseFromCam.len() <= THRESHOLD_CAM_CIRCLE_SECOND) {
+                newCamPos_Circle = true;
+                CirclePos = poseFromCam;
+            } else {
+                ROS_WARN_STREAM_DELAYED_THROTTLE(1.5, "[CB_CIRCLE] It's keep detecting "
+                                                      "a same too far pose\n"
+                                                      "camPos: " << poseFromCam.toString());
+            }
+        }
+    }
+}
+
+void CB_Camera_Tree(const geometry_msgs::PoseStamped &msg) {
+    static ros::Time lastStamp;
+    if (lastStamp >= msg.header.stamp && !FAKE_TEST_ENABLE) {
+        ROS_ERROR_STREAM("[CORE][CB_TREE] wrong stamp!\nnow: " << msg.header.stamp
+                                                                << "\nlast:" << lastStamp);
+        return;
+    }
+    lastStamp = msg.header.stamp;
+    vec3f_t poseFromCam;
+    poseFromCam.x = static_cast<float>(msg.pose.position.x);
+    poseFromCam.y = static_cast<float>(msg.pose.position.y);
+    poseFromCam.z = static_cast<float>(msg.pose.position.z);
+
+    bool foundTree = msg.pose.orientation.z > 0.5;
+
     auto & currentQRTarget = QRTargets[currentTargetID / 4][currentTargetID % 4];
 
-    /**
-     * Only look down find Board
-     */
-    if (currentCamMode == DOWNONLY) {
-        auto searchRes = simpleTargets[currentTargetID].checkForClosestPose(
-                poseFromCam + POSgolbalInMind);
-        if (searchRes.second < MATCH_DETECT_TOLLERANCE) {
-            if (Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] != currentTargetID) {
+    if (currentCamMode == ZEDQR && foundTree) {
+        if (Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] != currentTargetID) {
+            /**
+             *  It's might the first time we found this target, firstly check the pose
+             */
+            float dist = (currentQRTarget.globalPos -
+                          (POSgolbalInMind + poseFromCam)).distXY();
+            if (dist < THRESHOLD_CAM_TREE_FIRST) {
                 Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = currentTargetID;
-                firstDeteced = true;
+                newCamPos_Tree = true;
+
+                ROSPrintFirstFindTarget("[CB_TREE]", poseFromCam, {0, 0.0f});
+
+                TreePos = poseFromCam;
+            }
+        } else {
+            /**
+             *  We are tracking the current target
+             */
+            if (poseFromCam.distXY() <= THRESHOLD_CAM_TREE_SECOND) {
+                newCamPos_Tree = true;
+                TreePos = poseFromCam;
             } else {
-                firstDeteced = false;
-            }
-
-            BoardPos = poseFromCam;
-            newCamPoseReceived = true;
-
-            simpleTemp.possiblePose = searchRes.first;
-            simpleTemp.possibleX = (poseFromCam + POSgolbalInMind).x;
-            simpleTemp.detectedBoard = true;
-        }
-    }
-    /**
-     * Look for both Board & Circle
-     */
-    else if (currentCamMode == ZEDBOTH) {
-        if (foundBoard) {
-            auto searchRes = simpleTargets[currentTargetID].checkForClosestPose(
-                    poseFromCam + POSgolbalInMind);
-            if (searchRes.second < MATCH_DETECT_TOLLERANCE) {
-                if (Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] != currentTargetID) {
-                    Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = currentTargetID;
-                    firstDeteced = true;
-                } else {
-                    firstDeteced = false;
-                }
-                BoardPos = poseFromCam;
-                newCamPoseReceived = true;
-
-                simpleTemp.possiblePose = searchRes.first;
-                simpleTemp.possibleX = (poseFromCam + POSgolbalInMind).x;
-                simpleTemp.detectedBoard = true;
-            }
-        }
-        else if (foundCircle) {
-            auto searchRes = simpleTargets[currentTargetID].checkForClosestPose(
-                    poseFromCam + POSgolbalInMind);
-            if (searchRes.second < MATCH_DETECT_TOLLERANCE) {
-                if (Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] != currentTargetID) {
-                    Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = currentTargetID;
-                    firstDeteced = true;
-                } else {
-                    firstDeteced = false;
-                }
-                CirclePos = poseFromCam;
-                newCamPoseReceived = true;
-
-                simpleTemp.possiblePose = searchRes.first;
-                simpleTemp.possibleX = (poseFromCam + POSgolbalInMind).x;
-                simpleTemp.detectedCircle = true;
+                ROS_WARN_STREAM_DELAYED_THROTTLE(1.5, "[CB_BOARD] It's keep detecting "
+                                                      "a same too far pose\n"
+                                                      "camPos: " << poseFromCam.toString());
             }
         }
     }
-    /**
-     * Look for Circle
-     */
-    else if (currentCamMode == ZEDCIRCLE) {
-        if (foundCircle) {
-            auto searchRes = simpleTargets[currentTargetID].checkForClosestPose(
-                    poseFromCam + POSgolbalInMind);
-            if (searchRes.second < MATCH_DETECT_TOLLERANCE) {
-                if (Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] != currentTargetID) {
-                    Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = currentTargetID;
-                    firstDeteced = true;
-                } else {
-                    firstDeteced = false;
-                }
-                CirclePos = poseFromCam;
-                newCamPoseReceived = true;
-
-                simpleTemp.possiblePose = searchRes.first;
-                simpleTemp.possibleX = (poseFromCam + POSgolbalInMind).x;
-                simpleTemp.detectedCircle = true;
-            }
-        }
-    }
-    /**
-     * Look for QR
-     */
-    else if (currentCamMode == ZEDQR) {
-        //TODO
-        if (foundTree) {
-            float dist = (currentQRTarget.globalPos - (POSgolbalInMind + poseFromCam)).distXY();
-            if (dist < MATCH_DETECT_TOLLERANCE) {
-                Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] = currentTargetID;
-                QRPos = poseFromCam;
-            }
-        }
-        if (foundQR) {
-            float dist = (currentQRTarget.globalPos - (POSgolbalInMind + poseFromCam)).distXY();
-            if (dist < MATCH_DETECT_TOLLERANCE) {
-                Signals[SIGNAL_SLOT_QR_CODE_FOUND] = currentTargetID;
-                QRPos = poseFromCam;
-            }
-        }
-    }
-    /**
-     * Check the conflict Detection
-     */
-    if (firstDeteced) {
-        currentSimpleTarget.possiblePose = simpleTemp.possiblePose;
-        currentSimpleTarget.possibleX = simpleTemp.possibleX;
-        currentSimpleTarget.detectedCircle = simpleTemp.detectedCircle;
-        currentSimpleTarget.detectedBoard = simpleTemp.detectedBoard;
-    } else {
-        if (currentSimpleTarget.possiblePose != simpleTemp.possiblePose) {
-            ROS_FATAL_STREAM("[CORE] Detected one target at two different Poses!\n"
-                             "old pos:" << currentSimpleTarget.possiblePose
-                                        << "\t new pos:" << simpleTemp.possiblePose);
-        }
-        if (currentSimpleTarget.detectedCircle && simpleTemp.detectedBoard ||
-            currentSimpleTarget.detectedBoard && simpleTemp.detectedCircle) {
-            ROS_FATAL_STREAM("[CORE] Detected one target Both Circle & Board!\n"
-                             "old pos:" << currentSimpleTarget.possiblePose
-                                        << "\t new pos:" << simpleTemp.possiblePose);
-        }
-    }
-    if (DYNAMIC_DETECT_ENABLE) {
-        //TODO add the detected things from defferent target
-    }
-
 }
+
+void CB_Camera_QR(const geometry_msgs::PoseStamped &msg) {
+    // ROS_INFO_STREAM("[CB_QR][INTO_QR_CB]!");
+    static ros::Time lastStamp;
+    if (lastStamp >= msg.header.stamp && !FAKE_TEST_ENABLE) {
+        ROS_ERROR_STREAM("[CORE][CB_BOARD] wrong stamp!\nnow: " << msg.header.stamp
+                                                                << "\nlast:" << lastStamp);
+        return;
+    }
+    lastStamp = msg.header.stamp;
+    vec3f_t poseFromCam;
+    poseFromCam.x = static_cast<float>(msg.pose.position.x);
+    poseFromCam.y = static_cast<float>(msg.pose.position.y);
+    poseFromCam.z = static_cast<float>(msg.pose.position.z);
+
+    bool foundQR = msg.pose.orientation.w > 0.5;
+    bool savedQR = msg.pose.orientation.x > 0.5;
+
+    auto & currentQRTarget = QRTargets[currentTargetID / 4][currentTargetID % 4];
+
+    if (currentCamMode == ZEDQR && foundQR) {
+        if (poseFromCam.len() <= THRESHOLD_CAM_QR_SECOND) {
+            // Im in the picture Zone
+            if (Signals[SIGNAL_SLOT_FOUND_CURRENT_TARGET] == currentTargetID) {
+                QRPos = poseFromCam;
+                Signals[SIGNAL_SLOT_QR_CODE_FOUND] = currentTargetID;
+                if (savedQR) {
+                    Signals[SIGNAL_SLOT_QR_CODE_SAVED] = currentTargetID;
+                    ROS_WARN_STREAM("[CB_QR] QR captured!");
+                }
+            }
+        }
+    }
+}
+
 
 void getParas(ros::NodeHandle &n) {
     n.getParam("/comp2018_core/REFRESH_RATE", REFRESH_RATE);
@@ -1157,6 +1287,7 @@ void getParas(ros::NodeHandle &n) {
     n.getParam("/comp2018_core/DETECT_OFFSET", DETECT_OFFSET);
 
     n.getParam("/comp2018_core/CIRCLE_SEARCH_OFFSET_Y", CIRCLE_SEARCH_OFFSET_Y);
+    n.getParam("/comp2018_core/CIRCLE_SEARCH_OFFSET_Z", CIRCLE_SEARCH_OFFSET_Z);
     n.getParam("/comp2018_core/CIRCLE_PASS_DIST", CIRCLE_PASS_DIST);
     n.getParam("/comp2018_core/LOW_CIRCLE_BOARD_HEIGHT", LOW_CIRCLE_BOARD_HEIGHT);
     n.getParam("/comp2018_core/HIGH_CIRCLE_BOARD_HEIGHT", HIGH_CIRCLE_BOARD_HEIGHT);
@@ -1176,9 +1307,17 @@ void getParas(ros::NodeHandle &n) {
     n.getParam("/comp2018_core/DYNAMIC_DETECT_ENABLE", DYNAMIC_DETECT_ENABLE);
     n.getParam("/comp2018_core/DYNAMIC_DETECT_TOLLERANCE", DYNAMIC_DETECT_TOLLERANCE);
     n.getParam("/comp2018_core/MATCH_DETECT_TOLLERANCE", MATCH_DETECT_TOLLERANCE);
+
+    n.getParam("/comp2018_core/THRESHOLD_CAM_BOARD_FIRST", THRESHOLD_CAM_BOARD_FIRST);
+    n.getParam("/comp2018_core/THRESHOLD_CAM_BOARD_SECOND", THRESHOLD_CAM_BOARD_SECOND);
+    n.getParam("/comp2018_core/THRESHOLD_CAM_CIRCLE_FIRST", THRESHOLD_CAM_CIRCLE_FIRST);
+    n.getParam("/comp2018_core/THRESHOLD_CAM_CIRCLE_SECOND", THRESHOLD_CAM_CIRCLE_SECOND);
+    n.getParam("/comp2018_core/THRESHOLD_CAM_TREE_FIRST", THRESHOLD_CAM_TREE_FIRST);
+    n.getParam("/comp2018_core/THRESHOLD_CAM_TREE_SECOND", THRESHOLD_CAM_TREE_SECOND);
+    n.getParam("/comp2018_core/THRESHOLD_CAM_QR_SECOND", THRESHOLD_CAM_QR_SECOND);
 }
 
-void OutputInfoAtRate(float rate) {
+void OutputPosAtRate(float rate) {
     ROS_INFO_STREAM_DELAYED_THROTTLE(rate, "ZED Pos:"
             << currentPX4Pos.toString());
 
@@ -1260,7 +1399,7 @@ void InitPlaces() {
 
     simpleTargets.push_back(target);
     target = SimpleTarget(1, 1.6, true);
-    target.poses.emplace_back(-1.5, 1.6, 0);
+    target.poses.emplace_back(-1, 1.6, 0);
     target.poses.emplace_back(1.0, 1.3, 0);
     target.possiblePose = 0;
     if (DYNAMIC_DETECT_ENABLE) {
@@ -1270,22 +1409,24 @@ void InitPlaces() {
 
     target = SimpleTarget(2, 3.1, false);
     target.poses.emplace_back(-1, 3.5, 0);
-    target.poses.emplace_back(1.5, 3.1, 0);
+    target.poses.emplace_back(2, 2.6, 0);
     target.possiblePose = 1;
     if (DYNAMIC_DETECT_ENABLE) {
         target.detectedCircle = true;
     }
     simpleTargets.push_back(target);
 
+    if (QR_ONLY_ENABLE) simpleTargets.clear(); // only for QR
+
 
     vector<QRTarget> layer1;
-    layer1.emplace_back(0.9, 4.3);
-    layer1.emplace_back(2.7, 4.3);
+    layer1.emplace_back(2, 3);
+    layer1.emplace_back(-1, 3);
     QRTargets.push_back(std::move(layer1));
 
     vector<QRTarget> layer2;
-    layer2.emplace_back(0.9, 6.1);
-    layer2.emplace_back(2.7, 6.1);
+    layer2.emplace_back(2, 6);
+    layer2.emplace_back(-1, 6);
     QRTargets.push_back(std::move(layer2));
 }
 

@@ -8,6 +8,9 @@
 #define SIGNAL_SLOT_FOUND_CURRENT_TARGET "FirstFoundCurrentTarget"
 #define SIGNAL_SLOT_BREAK_MOVE_FOR_FOUND_TARGET "BreakMoveForFoundTarget"
 #define SIGNAL_SLOT_QR_CODE_FOUND "QRCodeFound"
+#define SIGNAL_SLOT_QR_CODE_SAVED "QRCodeSaved"
+#define SIGNAL_SLOT_COLLASPE_WARNNING_LEFT "QRCodeSaved"
+#define SIGNAL_SLOT_COLLASPE_WARNNING_RIGHT "QRCodeSaved"
 
 #include "ros/ros.h"
 
@@ -34,7 +37,10 @@ void MoveTo(float targetX, float targetY, float targetZ, bool usingVelSP = false
 void MoveTo(vec3f_t target, bool usingVelSp = true);
 void CB_PX4Pose(const px4_autonomy::Position &msg);
 void CB_status(const std_msgs::UInt8 & msg);
-void CB_Camera(const geometry_msgs::PoseStamped &msg);
+void CB_Camera_Board(const geometry_msgs::PoseStamped &msg);
+void CB_Camera_Circle(const geometry_msgs::PoseStamped &msg);
+void CB_Camera_Tree(const geometry_msgs::PoseStamped &msg);
+void CB_Camera_QR(const geometry_msgs::PoseStamped &msg);
 void TakeOff();
 void Hover();
 void InitPlaces();
@@ -43,6 +49,10 @@ void SendCamCMD(CamMode);
 void Land();
 void AimBoardDown();
 void getParas(ros::NodeHandle & n);
-void OutputInfoAtRate(float rate = 1);
+void OutputPosAtRate(float rate = 1);
+void
+ROSPrintFirstFindTarget(const std::string &CBFName, const vec3f_t &poseFromCam,
+                        const std::pair<size_t, float> &searchRes);
+
 
 #endif //COMP_STRATEGY_STRATEGY_H
