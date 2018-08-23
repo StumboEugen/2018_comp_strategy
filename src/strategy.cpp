@@ -259,7 +259,7 @@ int main(int argc, char **argv)
             if (DYNAMIC_DETECT_ENABLE) {
                 firstTargetPos.x = target.poses[target.possiblePose].x;
                 firstTargetPos.y = target.poses[target.possiblePose].y;
-                ROS_INFO_STREAM("[CORE][DYNAMIC_DETECTED] Moving to:"
+                ROS_INFO_STREAM("[FIRST_MV][DYNAMIC_DETECTED] Moving to:"
                                 << firstTargetPos.toString()
                                 << "\n which is Pose#" << target.possiblePose);
             } else {
@@ -268,26 +268,26 @@ int main(int argc, char **argv)
                 if (disRight < disLeft) {
                     firstTargetPos.x = target.poses.back().x;
                     firstTargetPos.y = target.poses.back().y;
-                    ROS_INFO_STREAM("[CORE] Moving to right side:"
+                    ROS_INFO_STREAM("[FIRST_MV] Moving to right side:"
                                             << firstTargetPos.toString());
                 } else {
                     firstTargetPos.x = target.poses.front().x;
                     firstTargetPos.y = target.poses.front().y;
-                    ROS_INFO_STREAM("[CORE] Moving to left side:"
+                    ROS_INFO_STREAM("[FIRST_MV] Moving to left side:"
                                             << firstTargetPos.toString());
                 }
             }
 
             if (needOffsetY) {
                 firstTargetPos.y -= DETECT_OFFSET;
-                ROS_INFO_STREAM("[CORE] Add y offsetL: " << -DETECT_OFFSET);
+                ROS_INFO_STREAM("[FIRST_MV] Add y offsetL: " << -DETECT_OFFSET);
             }
 
             /** this is the first move*/
             MoveTo(firstTargetPos);
             if (CheckSignal(SIGNAL_SLOT_FOUND_CURRENT_TARGET) == targetID) {
                 //This means we found the Target
-                ROS_INFO_STREAM("[CORE] Found target at the first Move!");
+                ROS_INFO_STREAM("[FIRST_MV] Found target at the first Move!");
                 Signals[SIGNAL_SLOT_BREAK_MOVE_FOR_FOUND_TARGET] = 0;
                 break;
             }
@@ -303,21 +303,21 @@ int main(int argc, char **argv)
             SearchDirection searchDirection = UNSET;
             size_t currentPose = 0;
 
-
             /**
              * Check where am I
              */
             auto fixResult = target.checkForClosestPose(POSgolbalInMind);
-            if (fixResult.second > 1.5f) {
-                ROS_ERROR_STREAM("[CORE] YOU MAY RUN INTO A WRONG LINE!!!\n current POS:"
-                                         << POSgolbalInMind.toString()
-                                         << "\ncurrent Target ID:" << currentTargetID
-                                         << "\nthe Closest pose#" << fixResult.first
-                                         << "\nPos: " << target.poses[fixResult.first].toString()
-                                         << "\n range:" << fixResult.second);
+            if (fixResult.second > 1.5f && !NO_ACCURATE_X_MODE) {
+                ROS_ERROR_STREAM("[CLOSEST CHECK] YOU MAY RUN INTO A WRONG LINE!!!"
+                                 "\n current POS:"
+                                 << POSgolbalInMind.toString()
+                                 << "\ncurrent Target ID:" << currentTargetID
+                                 << "\nthe Closest pose#" << fixResult.first
+                                 << "\nPos: " << target.poses[fixResult.first].toString()
+                                 << "\nRange:" << fixResult.second);
             }
             currentPose = fixResult.first;
-            ROS_WARN_STREAM("[CORE] We think we are at Pose# " << currentPose << "POS:"
+            ROS_WARN_STREAM("[CLOSEST CHECK] The cloest pose is # " << currentPose << "POS:"
                                     << POSgolbalInMind.toString());
 
             /**
@@ -338,11 +338,11 @@ int main(int argc, char **argv)
             }
 
             if (searchDirection == TOWARD_RIGHT) {
-                ROS_INFO_STREAM("[CORE] Decide to go right");
+                ROS_INFO_STREAM("[BEFORE_LOOPING] Decide to go right");
             } else if (searchDirection == TOWARD_LEFT) {
-                ROS_INFO_STREAM("[CORE] Decide to go left");
+                ROS_INFO_STREAM("[BEFORE_LOOPING] Decide to go left");
             } else {
-                ROS_FATAL_STREAM("[CORE] Not Decide to go left or right! At Pos # "
+                ROS_FATAL_STREAM("[BEFORE_LOOPING] Not Decide to go left or right! At Pos # "
                                  << currentPose << " POSglobal: " << POSgolbalInMind.toString());
             };
 
@@ -350,42 +350,42 @@ int main(int argc, char **argv)
             bool visited4 = false;
 
             /**
-             * keep searching in 5 places (round and round)
+             * loop searching in 5 places (round and round)
              */
             while(true) {
                 vec3f_t nextPos;
                 if (currentPose == 0) {
-                    ROS_INFO_STREAM("[CORE] At most left");
+                    ROS_INFO_STREAM("[LOOPING] At most left");
                     searchDirection = TOWARD_RIGHT;
                     visited0 = true;
                 }
                 else if (currentPose == target.poses.size() - 1) {
-                    ROS_INFO_STREAM("[CORE] At most right");
+                    ROS_INFO_STREAM("[LOOPING] At most right");
                     searchDirection = TOWARD_LEFT;
                     visited4 = true;
                 }
 
                 if (searchDirection == TOWARD_RIGHT) {
-                    ROS_INFO_STREAM("[CORE] Moving RIGHT");
+                    ROS_INFO_STREAM("[LOOPING] Moving TOWARD RIGHT");
                     currentPose++;
                 }
                 else if (searchDirection == TOWARD_LEFT) {
-                    ROS_INFO_STREAM("[CORE] Moving LEFT");
+                    ROS_INFO_STREAM("[LOOPING] Moving TOWARD LEFT");
                     currentPose--;
                 }
 
                 if (visited0 && visited4) {
-                    ROS_INFO_STREAM("[CORE] Each side both arrived, now cancel SearchOffset(Y)");
+                    ROS_INFO_STREAM("[LOOPING] Each side both arrived, now cancel SearchOffset(Y)");
                     needOffsetY = false;
                 }
 
                 nextPos = target.poses[currentPose];
                 if (needOffsetY) nextPos.y -= DETECT_OFFSET;
                 nextPos.z = CRUISE_HEIGHT;
-                ROS_WARN_STREAM("Next Possible coor:" << nextPos.toString());
+                ROS_WARN_STREAM("[LOOPING] Next Possible coor:" << nextPos.toString());
 
                 MoveTo(nextPos);
-                if (CheckSignal(SIGNAL_SLOT_FOUND_CURRENT_TARGET) == targetID) {
+                if (CheckSignal(SIGNAL_SLOT_FOUND_CURRENT_TARGET) == currentTargetID) {
                     vec3f_t dist2Target;
                     if (target.detectedBoard) {
                         dist2Target = BoardPos;
@@ -393,7 +393,7 @@ int main(int argc, char **argv)
                         dist2Target = CirclePos;
                     }
                     vec3f_t targetPos = POSgolbalInMind + dist2Target;
-                    ROS_WARN_STREAM("[CORE] See target#"
+                    ROS_WARN_STREAM("[LOOPING] See target#"
                                     << currentTargetID
                                     << "!\n Current Pose: " << POSgolbalInMind.toString()
                                     << "\nTarget Pose: " << targetPos.toString());
@@ -401,24 +401,24 @@ int main(int argc, char **argv)
                     foundTarget = true;
                     break;
                 }
-                ROS_INFO_STREAM("[CORE] NOT FIND TARGET\n");
+                ROS_INFO_STREAM("[LOOPING] NOT FIND TARGET\n");
                 ROS_INFO_STREAM("\n\n\n************** Next Possible POSE **************\n");
+                Hover();
                 ros::Duration(0.75).sleep();
             }
         }
 
-        ROS_INFO_STREAM("\n************** Found Target! **************\n");
+        ROS_INFO_STREAM("\n\n************** Found Target! **************\n\n");
         /**
-         * Move through circle
+         * Detected circle
          */
         if(target.detectedCircle) {
             SendCamCMD(ZEDCIRCLE);
-            ROS_INFO_STREAM("[CORE] found Circle! sleep 0.5 sec then move closer");
+            ROS_INFO_STREAM("[CIRCLE] found Circle! sleep 0.5 sec then move closer");
             ros::spinOnce();
             ros::Duration(0.5).sleep();
 
             //first move to a closer range
-            //TODO in case image process is dead
             while (true) {
                 ros::spinOnce();
                 OutputPosAtRate(1.25);
@@ -428,9 +428,9 @@ int main(int argc, char **argv)
                     localDis.y -= CIRCLE_SEARCH_OFFSET_Y;
                     localDis.z += CIRCLE_SEARCH_OFFSET_Z;
                     MoveBy(localDis);
-                    ROS_INFO_STREAM("[CORE][AIM_CIRCLE_BOARD] Circle Pos: " << CirclePos.toString());
+                    ROS_INFO_STREAM("[CIRCLE] Circle Pos: " << CirclePos.toString());
                     if (localDis.len() < FIRST_RANGE_BOARD_AIM) {
-                        ROS_INFO_STREAM("[CORE] Moved into a closer range");
+                        ROS_INFO_STREAM("[CIRCLE] Moved into a closer range");
                         break;
                     }
                 } else {
@@ -448,19 +448,15 @@ int main(int argc, char **argv)
                     vec3f_t localDis = CirclePos;
                     localDis.y -= CIRCLE_SEARCH_OFFSET_Y;
                     localDis.z += CIRCLE_SEARCH_OFFSET_Z;
-                    ROS_INFO_STREAM("[CORE][AIM_CIRCLE_BOARD] Circle Pos: " << CirclePos.toString());
-                    vec3f_t nextPos = currentPX4Pos + localDis * AIM_BOARD_P;
-                    pub_Pose.publish(nextPos.toPosCmd());
-                    if (FAKE_TEST_ENABLE) {
-                        pub_Fake.publish(nextPos.toPosCmd());
-                    }
+                    ROS_INFO_STREAM("[CIRCLE] Circle Pos: " << CirclePos.toString());
+                    MoveBy(localDis * AIM_BOARD_P);
                     ros::Duration(0.2).sleep();
                     if (localDis.len() < CIRCLE_BOARD_AIM_TOLLERANCE) {
                         staisfiedCount++;
-                        ROS_INFO_STREAM("[CORE] Very close, Satisifed count:" << staisfiedCount);
+                        ROS_INFO_STREAM("[CIRCLE] Very close, Satisifed count:" << staisfiedCount);
                         if (staisfiedCount >= AIM_BOARD_SATISFIED_COUNT) {
+                            ROS_INFO_STREAM("[CIRCLE] Circle Board Aim Complete!");
                             break;
-                            ROS_INFO_STREAM("[CORE] Circle Board Aim Complete!");
                         }
                         continue;
                     }
@@ -474,20 +470,20 @@ int main(int argc, char **argv)
             float disHigh = fabsf(HIGH_CIRCLE_BOARD_HEIGHT - currentPX4Pos.z);
             float disLow = fabsf(LOW_CIRCLE_BOARD_HEIGHT - currentPX4Pos.z);
             if (disHigh < disLow) {
-                ROS_INFO_STREAM("[CORE] It's a high circle, current Z:"
+                ROS_INFO_STREAM("[CIRCLE] It's a high circle, current Z:"
                                 << currentPX4Pos.z << " climbing...");
                 MoveBy(0, 0, 1.8f - currentPX4Pos.z, false);
             } else {
-                ROS_INFO_STREAM("[CORE] It's a low circle, current Z:"
+                ROS_INFO_STREAM("[CIRCLE] It's a low circle, current Z:"
                                 << currentPX4Pos.z << " climbing...");
                 MoveBy(0, 0, 1.4f - currentPX4Pos.z, false);
             }
-            ROS_INFO_STREAM("[CORE] Sleep" << CIRCLE_CLIMB_SLEEP_TIME << "sec Then Pass");
+            ROS_INFO_STREAM("[CIRCLE] Sleep" << CIRCLE_CLIMB_SLEEP_TIME << "sec Then Pass");
             ros::Duration(CIRCLE_CLIMB_SLEEP_TIME).sleep();
-            ROS_INFO_STREAM("[CORE] Passing Circle...");
+            ROS_INFO_STREAM("[CIRCLE] Passing Circle...");
             ros::spinOnce();
             MoveBy(0, CIRCLE_PASS_DIST + CIRCLE_SEARCH_OFFSET_Y, 0, false);  //TODO check
-            ROS_INFO_STREAM("[CORE] Pass Complete");
+            ROS_INFO_STREAM("[CIRCLE] Pass Complete");
 
             circleCount++;
             if (circleCount >= 3) {
@@ -498,10 +494,10 @@ int main(int argc, char **argv)
                                 "consider the rest all to be board");
             }
         /**
-        * Land on Board
+        * Detected Board
         */
         } else if (target.detectedBoard) {
-            ROS_INFO_STREAM("[CORE] found Board! sleep 0.5 sec then move closer");
+            ROS_INFO_STREAM("[BOARD] found Board! sleep 0.5 sec then move closer");
             ros::spinOnce();
             ros::Duration(0.5).sleep();
 
@@ -516,16 +512,16 @@ int main(int argc, char **argv)
             ros::spinOnce();
             ros::Duration(0.2).sleep();
 
-            ROS_INFO_STREAM("[CORE] Above Board, Start aiming");
+            ROS_INFO_STREAM("[BOARD] Above Board, Start aiming");
             AimBoardDown();
-            ROS_INFO_STREAM("[CORE] Aim Complete, start landing");
+            ROS_INFO_STREAM("[BOARD] Aim Complete, start landing");
             Land();
-            ROS_INFO_STREAM("[CORE] Land Complete");
+            ROS_INFO_STREAM("[BOARD] Land Complete");
         /**
          * Error!
          */
         } else {
-            ROS_ERROR_STREAM("[CORE] PASS SEARCH PROGRESS WITH NO DETECTION!");
+            ROS_FATAL_STREAM("[CORE] PASS SEARCH PROGRESS WITH NO DETECTION!");
             targetID--;
             continue;
         }
@@ -534,20 +530,29 @@ int main(int argc, char **argv)
          * after works
          */
         auto checkRes = target.checkForClosestPose(POSgolbalInMind);
-        target.possiblePose = checkRes.first;
-        vec3f_t place = target.poses[checkRes.first];
-        ROS_ERROR_STREAM_COND(checkRes.second > 1.5f,
-                              "[CORE] YOU MAY RUN INTO A WRONG LINE!!! current POS:\n"
-                              << POSgolbalInMind.toString()
-                              << "current Target ID：" << currentTargetID
-                              << "\n cloest spot:" << place.toString());
 
-        // Cali pose
-        POSgolbalInMind = place;
-        if (target.detectedCircle) {
-            ROS_INFO_STREAM("[CORE] Not a board, have to self Cail...");
-            POSgolbalInMind.y += CIRCLE_PASS_DIST ;
-            POSgolbalInMind.z = currentPX4Pos.z;
+        target.possiblePose = checkRes.first;
+        if (!NO_ACCURATE_X_MODE) {
+            vec3f_t place = target.poses[checkRes.first];
+            ROS_ERROR_STREAM_COND(checkRes.second > 1.5f,
+                                  "[AFTER_SIMPLE] YOU MAY RUN INTO A WRONG LINE!!! current POS:\n"
+                                          << POSgolbalInMind.toString()
+                                          << "current Target ID：" << currentTargetID
+                                          << "\n cloest spot:" << place.toString());
+
+            // Cali pose
+            POSgolbalInMind = place;
+            if (target.detectedCircle) {
+                ROS_INFO_STREAM("[AFTER_SIMPLE] Not a board, have to self Cail...");
+                POSgolbalInMind.y += CIRCLE_PASS_DIST ;
+                POSgolbalInMind.z = currentPX4Pos.z;
+            }
+        } else {
+            if (target.detectedCircle) {
+                POSgolbalInMind.y = target.globalY + CIRCLE_PASS_DIST;
+            } else {
+                POSgolbalInMind.y = target.globalY;
+            }
         }
     }
 
@@ -558,6 +563,7 @@ int main(int argc, char **argv)
      */
 
     if (QR_ONLY_ENABLE) {
+        ROS_WARN_STREAM("[QR ONLY] It's #QR ONLY# MODE");
         TakeOff();
     }
     else if (!FAKE_TEST_ENABLE) {
@@ -674,6 +680,16 @@ int main(int argc, char **argv)
                         }
                     }
                 }
+
+                //Cail using the Tree
+                while(!newCamPos_Tree) {
+                    ros::Duration(0.5).sleep();
+                    ros::spinOnce();
+                }
+                ros::spinOnce();
+                POSgolbalInMind = QRLayer[currentQRNum].globalPos - TreePos;
+                POSgolbalInMind.z = currentPX4Pos.z;
+
                 /**
                  * do not see the tree! do nothing, moving on, good luck
                  */
