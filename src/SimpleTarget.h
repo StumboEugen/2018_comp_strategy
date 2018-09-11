@@ -12,13 +12,17 @@
 
 using std::vector;
 
+enum SearchDirection {TOWARD_LEFT = -1, UNSET = 0, TOWARD_RIGHT = 1};
+
 struct SimpleTarget {
+    SearchDirection toDir = UNSET;
     int ID;
     float globalY;
     vector<vec3f_t> poses;    //CHANGE TO POSES
     bool onlyBoard;
-    bool detectedBoard = false;
-    bool detectedCircle = false;
+    bool isBoard = false;
+    bool isCircle = false;
+    float circleHeight;
     float possibleX = -6.5f;
     size_t possiblePose = 0;
 
@@ -38,6 +42,11 @@ struct SimpleTarget {
 
     SimpleTarget(int ID, float globalY, bool onlyBoard)
             : ID(ID), globalY(globalY), onlyBoard(onlyBoard)
+    {}
+
+    SimpleTarget(int ID, float globalY, bool isBoard, SearchDirection toDir)
+            : ID(ID), globalY(globalY), onlyBoard(isBoard),
+              isBoard(isBoard), isCircle(!isBoard), toDir(toDir)
     {}
 
     void setOffsets(vec3f_t x1, vec3f_t x2, vec3f_t x3, vec3f_t x4, vec3f_t x5) {

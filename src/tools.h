@@ -63,7 +63,7 @@ typedef struct vec3f_s {
         posCmd.x = this->x;
         posCmd.y = this->y;
         posCmd.z = this->z;
-        posCmd.yaw = 0.0f;
+        posCmd.yaw =3.1415926 / 2.0;
         posCmd.header.stamp = ros::Time::now();
         return posCmd;
     }
